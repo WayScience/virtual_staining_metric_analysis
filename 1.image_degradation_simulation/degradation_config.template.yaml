@@ -1,0 +1,5 @@
+analysis_out_dir: /PATH/TO/HOUSE/INTERMEDIATE/IMAGE/OUTPUTS/
+local_image_dir: /PATH/TO/LOCAL/IMAGES/
+local_profile_dir: /PATH/TO/LOCAL/PROFILES/
+channels: [OrigER, OrigRNA, OrigAGP, OrigMito, OrigDNA, OrigBrightfield]
+input_channel: OrigBrightfield
