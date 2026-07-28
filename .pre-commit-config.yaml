@@ -19,6 +19,7 @@ repos:
       # Only lint src/ and tests/
       files: |
         (?x)^(
+          utils/|
           src/|
           tests/
         )
