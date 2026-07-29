@@ -31,3 +31,19 @@ repos:
           .*nbconverted.*|
           .*\.ipynb$
         )
+    - id: ruff-format
+      types_or: [python, pyi]
+      args: [--line-length=100]
+      files: |
+        (?x)^(
+          utils/|
+          src/|
+          tests/
+        )
+      exclude: |
+        (?x)^(
+          examples/.*|
+          .*nbconvert.*|
+          .*nbconverted.*|
+          .*\.ipynb$
+        )
