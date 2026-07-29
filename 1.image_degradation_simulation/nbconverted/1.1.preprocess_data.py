@@ -149,6 +149,6 @@ for loaddata_file in loaddata_files:
     print("\nFailed validation counts by channel:")
     print(failure_report.to_string())
 
-    output_file = loaddata_file.with_name(f"{loaddata_file.stem}.fixed.csv")
-    loaddata_df.to_csv(output_file, index=False)
+    output_file = loaddata_file.with_name(f"{loaddata_file.stem}.fixed.parquet")
+    loaddata_df.to_parquet(output_file, index=False)
     print(f"Saved {len(loaddata_df)} fully validated rows to {output_file}\n")
