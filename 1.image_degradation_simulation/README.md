@@ -2,7 +2,9 @@
 
 ## Goals
 
-This simulation analysis is about the sensitivity and susceptibility to confounding of common image quality assessment metrics in context of label-free microscopy virtual staining.
+This project evaluates the sensitivity and susceptibility to confounding of full-reference image quality assessment metrics for researchers developing label-free virtual staining methods for microscopy and high-content screening.
+It addresses the need to understand whether metrics largely developed for natural images remain sensitive and interpretable in microscopy applications, where changes in cell line, treatment, experimental procedure, and image acquisition may alter image content independently of reconstruction quality.
+By jointly simulating image degradation and biologically driven distribution shifts in data, the analysis examines whether metric scores reflect true losses in virtual-staining fidelity or are confounded by the underlying content of the evaluated images.
 
 ## Dataset
 We use a Cell Painting dataset consisting of 18 unperturbed pediatric cancer cell lines plated under 5 different levels of seeding density (https://github.com/WayScience/pediatric_cancer_atlas_profiling):
