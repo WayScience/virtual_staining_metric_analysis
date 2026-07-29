@@ -6,10 +6,8 @@ import pandas as pd
 
 UNIQUE_ID_COLS = ["Metadata_Plate", "Metadata_Well", "Metadata_Site"]
 
-def _normalize_key_columns(
-    df: pd.DataFrame, 
-    cols: list[str]
-) -> pd.DataFrame:
+
+def _normalize_key_columns(df: pd.DataFrame, cols: list[str]) -> pd.DataFrame:
     """
     Normalize the key columns of a dataframe for consistent comparison.
 
@@ -29,11 +27,11 @@ def _normalize_key_columns(
 def _filter_by_profile_intersection(
     loaddata: pd.DataFrame,
     profile: pd.DataFrame,
-    unique_id_cols: list[str] | None = None, 
-    normalize: bool = False
+    unique_id_cols: list[str] | None = None,
+    normalize: bool = False,
 ) -> pd.DataFrame:
     """
-    Filter the loaddata dataframe to only retain rows that have corresponding 
+    Filter the loaddata dataframe to only retain rows that have corresponding
         entries in the profile dataframe based on unique identifier columns.
 
     :params loaddata: Input loaddata dataframe containing metadata columns.
@@ -45,11 +43,15 @@ def _filter_by_profile_intersection(
     if unique_id_cols is None:
         unique_id_cols = UNIQUE_ID_COLS
 
-    keys = _normalize_key_columns(loaddata, unique_id_cols) if normalize else loaddata.loc[:, unique_id_cols]
+    keys = (
+        _normalize_key_columns(loaddata, unique_id_cols)
+        if normalize
+        else loaddata.loc[:, unique_id_cols]
+    )
     profile_keys = (
-        _normalize_key_columns(profile, unique_id_cols) if normalize else profile.loc[:, unique_id_cols]
-        .dropna(subset=unique_id_cols)
-        .drop_duplicates()
+        _normalize_key_columns(profile, unique_id_cols)
+        if normalize
+        else profile.loc[:, unique_id_cols].dropna(subset=unique_id_cols).drop_duplicates()
     )
     keep_mask = (
         keys.merge(profile_keys, on=unique_id_cols, how="left", indicator=True)["_merge"]
@@ -61,10 +63,10 @@ def _filter_by_profile_intersection(
 
 
 def _merge_path_filename(
-    row: pd.Series, 
+    row: pd.Series,
     chan: str,
     path_col_template: str = "PathName_{}",
-    file_col_template: str = "FileName_{}"
+    file_col_template: str = "FileName_{}",
 ) -> pathlib.Path:
     """Small helper for merging path and filename columns into a pathlib.Path object."""
     return pathlib.Path(row[path_col_template.format(chan)]) / row[file_col_template.format(chan)]
@@ -74,23 +76,25 @@ def build_dataset_inputs(
     loaddata: pd.DataFrame,
     channels: list[str],
     profile: pd.DataFrame | None = None,
-    unique_id_cols: list[str] | None = None, 
+    unique_id_cols: list[str] | None = None,
     obj_coord_x_col: str | None = "Metadata_Cells_Location_Center_X",
     obj_coord_y_col: str | None = "Metadata_Cells_Location_Center_Y",
-    **kwargs
+    **kwargs,
 ) -> tuple[pd.DataFrame, list[dict] | None]:
 
     if unique_id_cols is None:
         unique_id_cols = UNIQUE_ID_COLS
-    
-    loaddata = _filter_by_profile_intersection(
-        loaddata, profile, unique_id_cols=unique_id_cols, **kwargs
-    ) if profile is not None else loaddata
-    
+
+    loaddata = (
+        _filter_by_profile_intersection(loaddata, profile, unique_id_cols=unique_id_cols, **kwargs)
+        if profile is not None
+        else loaddata
+    )
+
     df_meta = loaddata.loc[:, [col for col in loaddata.columns if col.startswith("Metadata_")]]
-    
+
     if "Metadata_time_point" not in df_meta.columns and "time_point" in loaddata.columns:
-        df_meta['Metadata_time_point'] = loaddata['time_point']
+        df_meta["Metadata_time_point"] = loaddata["time_point"]
 
     channel_paths = {
         channel: loaddata.apply(
@@ -101,44 +105,36 @@ def build_dataset_inputs(
         for channel in channels
     }
 
-    image_file_index = pd.DataFrame(
-        channel_paths
-    )
+    image_file_index = pd.DataFrame(channel_paths)
 
     hcat_df = pd.concat([image_file_index, df_meta], axis=1)
     if profile is not None:
         df1 = hcat_df.reset_index(drop=True).copy()
         df2 = profile.reset_index(drop=True).copy()
-        df1['_iloc1'] = df1.index
-        df2['_iloc2'] = df2.index
+        df1["_iloc1"] = df1.index
+        df2["_iloc2"] = df2.index
 
-        merge_df = pd.merge(
-            df1,
-            df2,
-            on=unique_id_cols,
-            how="inner",
-            validate="one_to_many"
-        )
+        merge_df = pd.merge(df1, df2, on=unique_id_cols, how="inner", validate="one_to_many")
 
-        mapping = (
-            merge_df.groupby('_iloc1')['_iloc2']
-            .apply(list)
-            .to_dict()
-        )
+        mapping = merge_df.groupby("_iloc1")["_iloc2"].apply(list).to_dict()
     else:
         merge_df = hcat_df
-        
 
-    if obj_coord_x_col is None or obj_coord_y_col is None or obj_coord_x_col not in merge_df.columns or obj_coord_y_col not in merge_df.columns:
-        pt_mapping = None    
+    if (
+        obj_coord_x_col is None
+        or obj_coord_y_col is None
+        or obj_coord_x_col not in merge_df.columns
+        or obj_coord_y_col not in merge_df.columns
+    ):
+        pt_mapping = None
     else:
-        image_file_index_clean = df1.iloc[
-            list(mapping.keys()),:
-        ]
-        pt_mapping = [{
-                'X': merge_df.loc[merge_df['_iloc1'] == idx][obj_coord_x_col].values,
-                'Y': merge_df.loc[merge_df['_iloc1'] == idx][obj_coord_y_col].values
+        image_file_index_clean = df1.iloc[list(mapping.keys()), :]
+        pt_mapping = [
+            {
+                "X": merge_df.loc[merge_df["_iloc1"] == idx][obj_coord_x_col].values,
+                "Y": merge_df.loc[merge_df["_iloc1"] == idx][obj_coord_y_col].values,
             }
-            for idx in image_file_index_clean.index]
-    
+            for idx in image_file_index_clean.index
+        ]
+
     return image_file_index_clean, pt_mapping

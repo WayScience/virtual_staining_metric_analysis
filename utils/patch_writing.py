@@ -3,6 +3,7 @@ Helper utilities for interacting with virtual_stain_flow.datasets.crop_dataset
 (https://github.com/WayScience/virtual_stain_flow.git) to retrieve metadata
 and write normalized patches to disk while keeping file index.
 """
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,8 +18,7 @@ def _path_component(value):
     """Return a short filesystem-safe representation of a metadata value."""
     text = str(value)
     return "".join(
-        character if character.isalnum() or character in "-_" else "-"
-        for character in text
+        character if character.isalnum() or character in "-_" else "-" for character in text
     )
 
 
@@ -34,14 +34,14 @@ def get_crop_file_index(
     file_index_to_metadata: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """
-    Interacts with virtual_stain_flow.datasets.crop_dataset 
+    Interacts with virtual_stain_flow.datasets.crop_dataset
         to retrieve internal cropping and source file information and arrange
         as a dataframe with matching length and index order to the dataset,
-        with each row containing: 
-            1) the crop bounding box definition 
+        with each row containing:
+            1) the crop bounding box definition
             2) the corresponding source image file paths
         and merges with the provided file index to metadata mapping to enrich
-        the crop index by source image level metadata. 
+        the crop index by source image level metadata.
 
     :param cropped_dataset: The cropped dataset containing the manifest.
     :param file_index_to_metadata: A DataFrame mapping source image file indices to metadata.
@@ -52,7 +52,7 @@ def get_crop_file_index(
     manifest = getattr(cropped_dataset, "manifest", None)
     if not manifest:
         raise ValueError("Cropped dataset does not have a manifest.")
-    # internal list of dataclasses defining bounding boxes for each crop 
+    # internal list of dataclasses defining bounding boxes for each crop
     # and their corresponding source image file indices
     crops: list[dataclass] | None = getattr(manifest, "crops", None)
     if not crops:
@@ -65,7 +65,8 @@ def get_crop_file_index(
     ## 1. flatten internal crop definitions to dataframe
     # dataframe contains x, y, width, height etc.
     crop_manifest = pd.DataFrame(
-        crop.to_dict() for crop in crops
+        crop.to_dict()
+        for crop in crops
         # source_image_row corresponds to rows in source_index df
     ).rename(columns={"manifest_idx": "source_image_row"})
     # crop_dataset_index corresponds to the dataset __get_item__ index
@@ -74,11 +75,11 @@ def get_crop_file_index(
     ## 2. expand source image rows to match the crop manifest and concat
     # dataframe contains channel1 filepath, channel2 filepath etc.
     source_rows = crop_manifest["source_image_row"].to_numpy()
-    source_index_expanded = source_index.copy().iloc[source_rows].reset_index(
-        names="source_image_index"
+    source_index_expanded = (
+        source_index.copy().iloc[source_rows].reset_index(names="source_image_index")
     )
 
-    ## 3. map every crop to expanded source image file paths 
+    ## 3. map every crop to expanded source image file paths
     # this dataframe now contains x, y, width, height + channel1 path, channel2 path ...
     crop_index = pd.concat(
         [crop_manifest.reset_index(drop=True), source_index_expanded],
@@ -94,7 +95,7 @@ def get_crop_file_index(
         file_index_to_metadata,
         how="left",
         on=list(source_index.columns),
-        validate="m:1"
+        validate="m:1",
     )
     if len(crop_index) != len(crop_index_metadata):
         raise ValueError("Mismatch between crop index and merged metadata.")
@@ -148,15 +149,12 @@ def write_normalized_crops(
         well = _path_component(metadata["Metadata_Well"])
         site = _site_label(metadata["Metadata_Site"])
         filename = (
-            f"crop_{crop_dataset_index:06d}"
-            f"_x{int(metadata['x']):04d}_y{int(metadata['y']):04d}.tif"
+            f"crop_{crop_dataset_index:06d}_x{int(metadata['x']):04d}_y{int(metadata['y']):04d}.tif"
         )
 
         for channel_names, image_stack in channel_groups:
             if image_stack.shape[0] != len(channel_names):
-                raise ValueError(
-                    "Tensor channel count does not match the dataset channel keys."
-                )
+                raise ValueError("Tensor channel count does not match the dataset channel keys.")
 
             for channel_position, channel in enumerate(channel_names):
                 channel_dir = tiff_root / plate / well / f"site_{site}" / channel
@@ -166,9 +164,7 @@ def write_normalized_crops(
                 image = image_stack[channel_position].detach().cpu().numpy()
                 image = np.asarray(image, dtype=np.float32)
                 if image.ndim != 2:
-                    raise ValueError(
-                        f"Expected a 2D {channel} crop, found shape {image.shape}."
-                    )
+                    raise ValueError(f"Expected a 2D {channel} crop, found shape {image.shape}.")
                 if overwrite or not output_path.exists():
                     imwrite(
                         output_path,

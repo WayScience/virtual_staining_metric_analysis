@@ -42,16 +42,13 @@ def filter_crops_with_objects(
             ) from error
 
         if len(x_coordinates) != len(y_coordinates):
-            raise ValueError(
-                f"X/Y coordinate counts differ for image index {image_index}."
-            )
+            raise ValueError(f"X/Y coordinate counts differ for image index {image_index}.")
 
         filtered_specs[image_index] = [
             ((crop_x, crop_y), width, height)
             for (crop_x, crop_y), width, height in image_crop_specs
             if any(
-                crop_x <= object_x < crop_x + width
-                and crop_y <= object_y < crop_y + height
+                crop_x <= object_x < crop_x + width and crop_y <= object_y < crop_y + height
                 for object_x, object_y in zip(x_coordinates, y_coordinates)
             )
         ]
