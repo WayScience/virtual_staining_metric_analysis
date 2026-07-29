@@ -7,47 +7,31 @@
 # 2. Cross-compare loaddata file paths with local data downloads, correct paths with best effort. 
 # 3. Write loaddata files with fixed path.
 
-# In[1]:
+# In[ ]:
 
 
 from pathlib import Path, PurePosixPath
-import yaml
 
 import pandas as pd
+
+from utils.validate_config import (
+    load_yaml_config,
+    require_config_directory,
+    require_config_value,
+ )
 
 
 # ## Pathing
 
-# In[2]:
+# In[ ]:
 
 
-config_file_path = Path("degradation_config.yaml")
-if not config_file_path.exists():
-    raise RuntimeError(f"Config file {config_file_path} does not exist.")
-
-with open(config_file_path, "r") as f:
-    config = yaml.safe_load(f)
-
-local_image_dir = config.get("local_image_dir", None)
-if not local_image_dir:
-    raise RuntimeError(
-        f"Local image directory not set in the config. "
-        "Please configure the analysis referencing the `degradation_config.template.yaml`."
-    )
-local_image_dir = Path(config["local_image_dir"]).expanduser().resolve()
-if not Path(local_image_dir).exists() or not local_image_dir.is_dir():
-    raise FileNotFoundError(f"Local image directory {local_image_dir} does not exist.")
-
-channels = config.get("channels", None)
-if not channels:
-    raise RuntimeError(
-        f"Channels not set in the config. "
-        "Please configure the analysis referencing the `degradation_config.template.yaml`."
-    )
+config = load_yaml_config("degradation_config.yaml")
+local_image_dir = require_config_directory(config, "local_image_dir").resolve()
+channels = require_config_value(config, "channels")
 
 metadata_download_path = Path("metadata")
-if not metadata_download_path.exists():
-    metadata_download_path.mkdir(parents=True, exist_ok=True)
+metadata_download_path.mkdir(parents=True, exist_ok=True)
 
 loaddata_dir = metadata_download_path / "loaddatas"
 loaddata_files = sorted(
