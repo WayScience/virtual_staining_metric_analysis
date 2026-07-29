@@ -7,7 +7,7 @@
 # 2. Cross-compare loaddata file paths with local data downloads, correct paths with best effort. 
 # 3. Write loaddata files with fixed path.
 
-# In[ ]:
+# In[1]:
 
 
 from pathlib import Path, PurePosixPath
@@ -17,13 +17,14 @@ import pandas as pd
 from utils.validate_config import (
     load_yaml_config,
     require_config_directory,
+    require_config_string,
     require_config_value,
- )
+)
 
 
 # ## Pathing
 
-# In[ ]:
+# In[2]:
 
 
 config = load_yaml_config("degradation_config.yaml")
@@ -47,11 +48,11 @@ if not loaddata_files:
 # In[3]:
 
 
-path_col_prefix = "PathName_"
-file_col_prefix = "FileName_"
-# original analysis data root path, shouldn't change since the loaddata are downloaded from a pinned commit
-source_path_prefix = "/media/18tbdrive" 
-source_path_prefix = PurePosixPath("/media/18tbdrive")
+path_col_prefix = require_config_string(config, "path_col_prefix")
+file_col_prefix = require_config_string(config, "file_col_prefix")
+source_path_prefix = PurePosixPath(
+    require_config_string(config, "source_path_prefix")
+)
 
 path_columns = {channel: f"{path_col_prefix}{channel}" for channel in channels}
 file_columns = {channel: f"{file_col_prefix}{channel}" for channel in channels}
@@ -63,8 +64,8 @@ for loaddata_file in loaddata_files:
         channel: [
             column
             for column in (path_columns[channel], file_columns[channel])
-                if column not in csv_columns
-            ]
+            if column not in csv_columns
+        ]
         for channel in channels
     }
     missing_columns_by_channel = {
@@ -77,7 +78,9 @@ for loaddata_file in loaddata_files:
             f"{channel}: {', '.join(columns)}"
             for channel, columns in missing_columns_by_channel.items()
         )
-        raise KeyError(f"Missing anticipated columns in {loaddata_file.name}: {missing_details}")
+        raise KeyError(
+            f"Missing anticipated columns in {loaddata_file.name}: {missing_details}"
+        )
 
 # Process each loaddata CSV file to validate and fix paths and filenames.
 for loaddata_file in loaddata_files:
@@ -86,7 +89,7 @@ for loaddata_file in loaddata_files:
     loaddata_df = pd.read_csv(loaddata_file)
     print(f"Loaded loaddata file with shape: {loaddata_df.shape}")
 
-    # Collect failed path/file counts 
+    # Collect failed path/file counts
     failure_report = pd.DataFrame(
         0, index=pd.Index(channels, name="channel"), columns=["path", "file"], dtype=int
     )
@@ -149,4 +152,3 @@ for loaddata_file in loaddata_files:
     output_file = loaddata_file.with_name(f"{loaddata_file.stem}.fixed.csv")
     loaddata_df.to_csv(output_file, index=False)
     print(f"Saved {len(loaddata_df)} fully validated rows to {output_file}\n")
-

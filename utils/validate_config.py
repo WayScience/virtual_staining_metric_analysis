@@ -27,6 +27,14 @@ def require_config_value(config: Mapping[str, Any], key: str) -> Any:
     return value
 
 
+def require_config_string(config: Mapping[str, Any], key: str) -> str:
+    """Return a required, non-empty string config value."""
+    value = require_config_value(config, key)
+    if not isinstance(value, str):
+        raise TypeError(f"Config value {key!r} must be a string.")
+    return value
+
+
 def require_config_directory(
     config: Mapping[str, Any],
     key: str,

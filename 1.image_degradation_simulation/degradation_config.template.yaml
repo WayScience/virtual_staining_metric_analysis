@@ -3,3 +3,7 @@ local_image_dir: /PATH/TO/LOCAL/IMAGES/
 local_profile_dir: /PATH/TO/LOCAL/PROFILES/
 channels: [OrigER, OrigRNA, OrigAGP, OrigMito, OrigDNA, OrigBrightfield]
 input_channel: OrigBrightfield
+path_col_prefix: "PathName_"
+file_col_prefix: "FileName_"
+# original analysis data root path, shouldn't change since the loaddata are downloaded from a pinned commit
+source_path_prefix: "/media/18tbdrive" 
