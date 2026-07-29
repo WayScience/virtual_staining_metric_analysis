@@ -15,19 +15,19 @@ We use a Cell Painting dataset consisting of 18 unperturbed pediatric cancer cel
 ## Approach
 
 ### Image degrading transforms
-We first selected a suite of 6 families degrading image transforms to simulate artifacts from virtual staining models generating imperfect predictions:
+We selected a suite of 6 families degrading image transforms to simulate artifacts from virtual staining models generating imperfect predictions:
 - Gaussian noise (additive)
 - Gaussian blur
 - Erosion (grayscale morpholical operation)
 - Dilation (grayscale morpholical operation)
 - Gamma correction (dimming and brightening)
 - Grid distortion
-And apply them to the fluoresence Cell Painting channels of our dataset in 6 incremental levels of severity by tuning a single transformation parameter while leaving others fixed (see code for details).
+We apply these to the fluoresence Cell Painting channels of our dataset in 6 incremental levels of severity by tuning a single transformation parameter while leaving others fixed (see code for details).
 
 This produces 36 degraded variant per image in our Cell Painting dataset.
 
 ### Image quality assessment metric evaluation of degraded variant against reference
-We then selected a collection of 5 full reference, image quality assessment metrics commonly used in microscopy and histology virtual staining work:
+After applying degradation transforms, we selected a collection of 5 full reference, image quality assessment metrics commonly used in microscopy and histology virtual staining work:
 - Structural Similarity Index Measure (SSIM)
 - Peak Signal-to-noise Ratio (PSNR)
 - Deep Image Structure And Texture Similarity (DISTS)
