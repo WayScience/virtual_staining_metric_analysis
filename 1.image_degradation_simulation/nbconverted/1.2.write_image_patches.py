@@ -7,108 +7,67 @@
 # 2. Construct dataset & generate tiling patches, filter to keep only patches containing at least one CellProfiler object
 # 3. Write normalized, patched images to disk keeping track of each image file and source metadata.
 
-# In[1]:
+# In[8]:
 
 
+from itertools import islice
 from pathlib import Path
-from functools import reduce
-import sys
-import yaml
 
-import pandas as pd
-import pyarrow.parquet as pq
-import numpy as np
-
+import pyarrow.dataset as ds
 from virtual_stain_flow.datasets.crop_dataset import CropImageDataset
 from virtual_stain_flow.datasets.base_dataset import BaseImageDataset
 from virtual_stain_flow.transforms.normalizations import MaxScaleNormalize
 from virtual_stain_flow.datasets.ds_engine.crop_generators import generate_tile_crops
 from virtual_stain_flow.evaluation.visualization import plot_dataset_grid
-from utils.crop_specs import filter_crops_with_objects
+
+from utils.validate_config import (
+    load_yaml_config,
+    require_config_directory,
+    require_config_membership,
+    require_config_value,
+)
 from utils.loaddata_to_index import build_dataset_inputs
-from utils.patch_writing import get_crop_file_index, write_normalized_crops
+from utils.crop_dataset_interface import filter_crops_with_objects, get_crop_file_index
+from utils.image_writing import write_normalized_images_parquet
 
 
 # ## Pathing
 
-# In[2]:
+# In[9]:
 
 
-config_file_path = Path("degradation_config.yaml")
-if not config_file_path.exists():
-    raise RuntimeError(f"Config file {config_file_path} does not exist.")
-
-with open(config_file_path, "r") as f:
-    config = yaml.safe_load(f)
-
-analysis_dir = config.get("analysis_out_dir", None)
-
-if not analysis_dir:
-    raise RuntimeError(
-        f"Analysis output directory not set in the config. "
-        "Please configure the analysis referencing the `degradation_config.template.yaml`."
-    )
-
-analysis_dir = Path(analysis_dir)
-
-if not analysis_dir.exists():
-    analysis_dir.mkdir(parents=True, exist_ok=True)
+config = load_yaml_config("degradation_config.yaml")
+analysis_dir = require_config_directory(config, "analysis_out_dir", create=True)
+local_profile_dir = require_config_directory(config, "local_profile_dir")
+channels = require_config_value(config, "channels")
+input_channel = require_config_membership(config, "input_channel", "channels")
 
 patch_out_dir = analysis_dir / "patches"
-
-if not patch_out_dir.exists():
-    patch_out_dir.mkdir(parents=True, exist_ok=True)
-
-local_profile_dir = config.get("local_profile_dir", None)
-
-if not local_profile_dir:
-    raise RuntimeError(
-        f"Local profile directory not set in the config. "
-        "Please configure the analysis referencing the `degradation_config.template.yaml`."
-    )
-
-local_profile_dir = Path(local_profile_dir)
-
-if not local_profile_dir.exists():
-    raise RuntimeError(
-        f"Local profile directory {local_profile_dir} does not exist."
-    )
-
-channels = config.get("channels", None)
-if not channels:
-    raise RuntimeError(
-        f"Channels not set in the config. "
-        "Please configure the analysis referencing the `degradation_config.template.yaml`."
-    )
-
-input_channel = config.get("input_channel", None)
-if not input_channel:
-    raise RuntimeError(
-        f"Input channel not set in the config. "
-        "Please configure the analysis referencing the `degradation_config.template.yaml`."
-    )
+patch_out_dir.mkdir(parents=True, exist_ok=True)
+reference_records_dir = patch_out_dir / "reference_records"
+reference_records_dir.mkdir(parents=True, exist_ok=True)
 
 metadata_download_path = Path("metadata")
-if not metadata_download_path.exists():
-    metadata_download_path.mkdir(parents=True, exist_ok=True)
+metadata_download_path.mkdir(parents=True, exist_ok=True)
 
 loaddata_dir = metadata_download_path / "loaddatas"
-loaddata_files = sorted(
-    path for path in loaddata_dir.glob("*.fixed.csv")
-)
+loaddata_files = sorted(path for path in loaddata_dir.glob("*.fixed.parquet"))
 if not loaddata_files:
-    raise FileNotFoundError(f"No source loaddata CSV files found in {loaddata_dir}.")
+    raise FileNotFoundError(f"No processed loaddata Parquet files found in {loaddata_dir}.")
+
+
 
 
 # # Construct Dataset
 
 # Read in downloaded and processed loaddata
 
-# In[3]:
+# In[10]:
 
 
-loaddata_df = pd.concat(pd.read_csv(file) for file in loaddata_files)
-loaddata_df.reset_index(drop=True, inplace=True)
+dataset = ds.dataset(loaddata_files, format="parquet")
+table = dataset.to_table()
+loaddata_df = table.to_pandas()
 loaddata_df.head()
 
 
@@ -117,40 +76,38 @@ loaddata_df.head()
 # - merging with the loaddata to map image files to experimetnal conditions and image level identity.
 # - access of the object segmentation information, suggesting where in each image exists probable cells.   
 
-# In[4]:
+# In[11]:
 
 
-profile_files = list(
-        local_profile_dir.glob('*_sc_normalized.parquet')
+profile_files = sorted(local_profile_dir.glob("*_sc_normalized.parquet"))
+if not profile_files:
+    raise FileNotFoundError(
+        f"No normalized profile Parquet files found in {local_profile_dir}."
     )
+
 print(f"Found {len(profile_files)} parquet files in {local_profile_dir}.")
-pq_schemas = [
-    pq.ParquetFile(parquet).schema for parquet in profile_files
+profile_dataset = ds.dataset(profile_files, format="parquet")
+
+fragments = list(profile_dataset.get_fragments())
+shared_columns = set.intersection(
+    *(set(fragment.physical_schema.names) for fragment in fragments)
+)
+shared_meta_columns = [
+    column
+    for column in profile_dataset.schema.names
+    if column.startswith("Metadata_") and column in shared_columns
 ]
-shared_columns = list(
-    reduce(
-        np.intersect1d,
-        [set(schema.names) for schema in pq_schemas]
-    )[0]
-)
+if not shared_meta_columns:
+    raise ValueError("Profile Parquet files have no shared Metadata_ columns.")
 
-# Only read in the metadata columns to reduce memory usage and make reading faster. 
-shared_meta_columns = [col for col in shared_columns if col.startswith("Metadata_")]
-
-profiles = pd.concat(
-    [
-        pq.read_table(parquet, columns=shared_meta_columns).to_pandas()
-        for parquet in profile_files
-    ], 
-    ignore_index=True
-)
+profiles = profile_dataset.to_table(columns=shared_meta_columns).to_pandas()
 
 profiles.head()
 
 
 # ## Construct & showcase patched image dataset
 
-# In[5]:
+# In[12]:
 
 
 # Raw dataset returning multi-channel full FOVs
@@ -191,12 +148,11 @@ _ = plot_dataset_grid(
 )
 
 
-# ## Indexing the crops to ensure relationship to source FOV is retained (important for later analysis requiring stratification by experimental condition)
-# Each patch (crop) manifest entry stores the positional row (`manifest_idx`) of its source multi-channel image. 
-# The next cell uses that position to attach the crop coordinates, all six source file paths, and every image-level metadata field to a stable `crop_dataset_index`. 
-# It also verifies the source paths against `cropped_dataset.file_index` before writing `crop_index.csv`.
+# ## Index crops and preserve source-image provenance
+# 
+# Each crop manifest entry stores the positional row (`manifest_idx`) of its source multi-channel image. The next cell attaches crop geometry, source paths, and image-level metadata to a stable `crop_dataset_index`, validates the source paths against `cropped_dataset.file_index`, and writes a typed `crop_index.parquet` audit table.
 
-# In[6]:
+# In[13]:
 
 
 crop_index = get_crop_file_index(
@@ -204,8 +160,9 @@ crop_index = get_crop_file_index(
     image_file_index_metadata,
 )
 
-# validate no source-file mismatches between the crop index and the original image metadata
-dataset_source_files = image_file_index_metadata.loc[crop_index["source_image_row"]].reset_index(drop=True)
+# Validate no source-file mismatches between the crop index and original metadata.
+source_rows = crop_index["source_image_row"]
+dataset_source_files = image_file_index_metadata.loc[source_rows].reset_index(drop=True)
 for channel in channels:
     if not dataset_source_files[channel].astype(str).equals(
         crop_index[channel].astype(str)
@@ -213,32 +170,23 @@ for channel in channels:
         raise ValueError(f"Source-file mismatch for channel {channel}.")
     crop_index[channel] = crop_index[channel].astype(str)
 
-crop_index_path = patch_out_dir / "crop_index.csv"
-crop_index.to_csv(crop_index_path, index=False)
-print(f"Indexed {len(crop_index):,} crops in {crop_index_path}")
+print(f"Indexed {len(crop_index):,} crops")
+crop_index.rename(columns={"crop_dataset_index": "dataset_index"}, inplace=True)
 crop_index.head()
 
 
-# ## Write normalized channel patches, still keeping track of metadata
+# ## Write normalized channel patches as embedded Parquet records
 # 
-# The writer stores each normalized channel patch as a float32 TIFF under `tiffs/<plate>/<well>/site_<site>/<channel>/`. 
-# Filenames contain the global patch index and patch origin, while `index.csv` records the relative TIFF path, its source image file, crop geometry, and all image-level metadata. 
-# Existing TIFFs are skipped by default, so an interrupted export can be rerun safely; the complete patch index is rebuilt atomically at the end.
+# The writer stores one self-describing row per crop/channel under `reference_records/`. Each row contains a stable `record_id`, the normalized float32 `YX` pixel buffer, its shape and dtype contract, source-image provenance, crop geometry, and all image-level metadata. Bounded Parquet shards are written through validated temporary files and valid completed shards are reused on rerun. Reference and future degraded-stack datasets use the same record envelope and map through the same `record_id`.
 
-# In[7]:
+# In[14]:
 
 
-patch_index = write_normalized_crops(
-    cropped_dataset,
-    crop_index,
-    patch_out_dir,
-    overwrite=False,
+patch_export = write_normalized_images_parquet(
+    dataset=cropped_dataset,
+    image_metadata=crop_index,
+    output_dir=reference_records_dir,
+    image_indices=None, # write all images in dataset
+    shard_size=128,
+    overwrite=False
 )
-
-expected_file_count = len(cropped_dataset) * len(channels)
-if len(patch_index) != expected_file_count:
-    raise RuntimeError(
-        f"Expected {expected_file_count:,} indexed TIFFs, found {len(patch_index):,}."
-    )
-
-patch_index.head()
