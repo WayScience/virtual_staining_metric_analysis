@@ -152,3 +152,4 @@ for loaddata_file in loaddata_files:
     output_file = loaddata_file.with_name(f"{loaddata_file.stem}.fixed.parquet")
     loaddata_df.to_parquet(output_file, index=False)
     print(f"Saved {len(loaddata_df)} fully validated rows to {output_file}\n")
+
