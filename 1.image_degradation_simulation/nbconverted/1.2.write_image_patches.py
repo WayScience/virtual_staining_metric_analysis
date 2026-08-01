@@ -7,10 +7,9 @@
 # 2. Construct dataset & generate tiling patches, filter to keep only patches containing at least one CellProfiler object
 # 3. Write normalized, patched images to disk keeping track of each image file and source metadata.
 
-# In[8]:
+# In[1]:
 
 
-from itertools import islice
 from pathlib import Path
 
 import pyarrow.dataset as ds
@@ -28,12 +27,12 @@ from utils.validate_config import (
 )
 from utils.loaddata_to_index import build_dataset_inputs
 from utils.crop_dataset_interface import filter_crops_with_objects, get_crop_file_index
-from utils.image_writing import write_normalized_images_parquet
+from utils.write_reference_image import write_reference_images
 
 
 # ## Pathing
 
-# In[9]:
+# In[2]:
 
 
 config = load_yaml_config("degradation_config.yaml")
@@ -41,11 +40,6 @@ analysis_dir = require_config_directory(config, "analysis_out_dir", create=True)
 local_profile_dir = require_config_directory(config, "local_profile_dir")
 channels = require_config_value(config, "channels")
 input_channel = require_config_membership(config, "input_channel", "channels")
-
-patch_out_dir = analysis_dir / "patches"
-patch_out_dir.mkdir(parents=True, exist_ok=True)
-reference_records_dir = patch_out_dir / "reference_records"
-reference_records_dir.mkdir(parents=True, exist_ok=True)
 
 metadata_download_path = Path("metadata")
 metadata_download_path.mkdir(parents=True, exist_ok=True)
@@ -55,14 +49,15 @@ loaddata_files = sorted(path for path in loaddata_dir.glob("*.fixed.parquet"))
 if not loaddata_files:
     raise FileNotFoundError(f"No processed loaddata Parquet files found in {loaddata_dir}.")
 
-
+output_dir = analysis_dir / "patches" / "reference_records"
+output_dir.mkdir(parents=True, exist_ok=True)
 
 
 # # Construct Dataset
 
 # Read in downloaded and processed loaddata
 
-# In[10]:
+# In[3]:
 
 
 dataset = ds.dataset(loaddata_files, format="parquet")
@@ -76,7 +71,7 @@ loaddata_df.head()
 # - merging with the loaddata to map image files to experimetnal conditions and image level identity.
 # - access of the object segmentation information, suggesting where in each image exists probable cells.   
 
-# In[11]:
+# In[4]:
 
 
 profile_files = sorted(local_profile_dir.glob("*_sc_normalized.parquet"))
@@ -107,7 +102,7 @@ profiles.head()
 
 # ## Construct & showcase patched image dataset
 
-# In[12]:
+# In[5]:
 
 
 # Raw dataset returning multi-channel full FOVs
@@ -152,7 +147,7 @@ _ = plot_dataset_grid(
 # 
 # Each crop manifest entry stores the positional row (`manifest_idx`) of its source multi-channel image. The next cell attaches crop geometry, source paths, and image-level metadata to a stable `crop_dataset_index`, validates the source paths against `cropped_dataset.file_index`, and writes a typed `crop_index.parquet` audit table.
 
-# In[13]:
+# In[6]:
 
 
 crop_index = get_crop_file_index(
@@ -179,14 +174,11 @@ crop_index.head()
 # 
 # The writer stores one self-describing row per crop/channel under `reference_records/`. Each row contains a stable `record_id`, the normalized float32 `YX` pixel buffer, its shape and dtype contract, source-image provenance, crop geometry, and all image-level metadata. Bounded Parquet shards are written through validated temporary files and valid completed shards are reused on rerun. Reference and future degraded-stack datasets use the same record envelope and map through the same `record_id`.
 
-# In[14]:
+# In[7]:
 
 
-patch_export = write_normalized_images_parquet(
+write_reference_images(
+    path=output_dir,
     dataset=cropped_dataset,
-    image_metadata=crop_index,
-    output_dir=reference_records_dir,
-    image_indices=None, # write all images in dataset
-    shard_size=128,
-    overwrite=False
+    metadata=crop_index,
 )
