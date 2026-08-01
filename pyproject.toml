@@ -1,0 +1,46 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "virtual-staining-metric-analysis"
+version = "0.1.0"
+description = "Metrics analysis surrounding virtual staining model evaluation contexts."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "jupyter",
+    "ipython",
+    "notebook",
+    "opencv-python==4.10.0.84",
+    "albumentations==2.0.1",
+    "pyarrow",
+    "tifffile",
+    "numpy>=1.26",
+    "pandas>=2.2",
+    "statsmodels",
+    "scikit-learn",
+    "scikit-image",
+    "torchmetrics",
+    "lightning",
+    "polars",
+    "virtual_stain_flow @ git+https://github.com/WayScience/virtual_stain_flow.git@fe07aefaabc0c9553d9a64d05f21d65654704478"
+]
+[project.optional-dependencies]
+dev = [
+    "pre-commit",
+    "pytest",
+    "pytest-cov",
+    "jupytext",
+    "ruff==0.16.0",
+    "onesentence",
+]
+
+[tool.setuptools]
+package-dir = {"" = "."}
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
