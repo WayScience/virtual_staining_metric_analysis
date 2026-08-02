@@ -24,6 +24,7 @@ IMAGE_RECORD_COLUMNS = {
     "byte_order",
     "source_image_file",
 }
+SHARD_SIZE = 128  # Fixed shard size for writing reference images to parquet files
 
 
 def _image_record_schema(image_metadata: pd.DataFrame) -> pa.Schema:
@@ -94,7 +95,6 @@ def write_reference_images(
     :param dataset: PyTorch dataset containing reference images.
     :param metadata: DataFrame containing metadata for the reference images.
     """
-    SHARD_SIZE = 128  # Fixed shard size for writing reference images to parquet files
 
     if not path.exists():
         raise ValueError(f"Provided path does not exist: {path}")
