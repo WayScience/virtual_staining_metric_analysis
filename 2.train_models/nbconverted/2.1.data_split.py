@@ -19,11 +19,11 @@
 
 
 from pathlib import Path
-import sys
-import yaml
 
 import numpy as np
 import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 import pyarrow.dataset as ds
 
 from utils.validate_config import (
@@ -61,6 +61,13 @@ if not platemap_files:
 barcode_file = metadata_download_path / "Barcode_platemap_pilot_data.csv"
 if not barcode_file.exists():
     raise FileNotFoundError(f"Barcode platemap CSV file not found: {barcode_file}")
+
+local_profile_dir = require_config_directory(config, "local_profile_dir")
+profile_files = sorted(local_profile_dir.glob("*_sc_normalized.parquet"))
+if not profile_files:
+    raise FileNotFoundError(
+        f"No normalized profile Parquet files found in {local_profile_dir}."
+    )
 
 output_dir = Path(".") / "data_split_output"
 output_dir.mkdir(parents=True, exist_ok=True)
@@ -121,7 +128,7 @@ loaddata_barcode_platemap_df.head()
 
 # ## Splitting
 
-# In[ ]:
+# In[7]:
 
 
 loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_df.copy()
@@ -131,7 +138,7 @@ for k, v in TRAIN_CONDITION_KWARGS.items():
         loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_train_df[loaddata_barcode_platemap_train_df[k].isin(v)]
     else:
         loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_train_df[loaddata_barcode_platemap_train_df[k] == v]
-    if len(loaddata_barcode_platemap_train_df) == 0:
+    if len(loaddata_barcode_platemap_train_df) == 0:####
         raise ValueError(f'No data found for {k}={v}')
 print(f"{loaddata_barcode_platemap_train_df.shape[0]} sites for train and heldout")
 
@@ -148,7 +155,7 @@ print(f"{loaddata_barcode_platemap_eval_df.shape[0]} sites for evaluation")
 # 
 # Using wells rather than individual sites as the split unit reduces leakage from shared well-level biology and acquisition conditions. Each condition group must contain at least two unique wells to contribute data to both splits.
 
-# In[ ]:
+# In[8]:
 
 
 # Fix the random well selection for reproducible splits.
@@ -181,17 +188,46 @@ print(f"{loaddata_heldout_df.shape[0]} sites Heldout")
 loaddata_train_df = pd.concat(train_list).reset_index(drop=True)
 print(f"{loaddata_train_df.shape[0]} sites for Training")
 
-loaddata_heldout_df.to_csv(output_dir / 'loaddata_heldout.csv')
-loaddata_train_df.to_csv(output_dir / 'loaddata_train.csv')
-loaddata_barcode_platemap_eval_df.to_csv(output_dir / 'loaddata_eval.csv')
+loaddata_heldout_df.to_parquet(output_dir / 'loaddata_heldout.parquet')
+loaddata_train_df.to_parquet(output_dir / 'loaddata_train.parquet')
+loaddata_barcode_platemap_eval_df.to_parquet(output_dir / 'loaddata_eval.parquet')
+
+
+# ## Wrangle sc features to pair with loaddata
+# Helps with generating object containing crops
+
+# In[9]:
+
+
+profile_dataset = ds.dataset(profile_files, format="parquet")
+
+fragments = list(profile_dataset.get_fragments())
+shared_columns = set.intersection(
+    *(set(fragment.physical_schema.names) for fragment in fragments)
+)
+shared_meta_columns = [
+    column
+    for column in profile_dataset.schema.names
+    if column.startswith("Metadata_") and column in shared_columns
+]
+if not shared_meta_columns:
+    raise ValueError("Profile Parquet files have no shared Metadata_ columns.")
+
+profiles = profile_dataset.to_table(columns=shared_meta_columns)
+present_plates = pa.array(list(loaddata_barcode_platemap_eval_df['Metadata_Plate'].unique()))
+profiles = profiles.filter(pa.compute.is_in(profiles['Metadata_Plate'], present_plates))
+
+pq.write_table(
+    profiles,
+    output_dir / "sc_profiles.parquet",
+)
 
 
 # ## Outputs
 # 
-# The notebook writes three CSV files to `data_split_output/`:
+# The notebook writes three parquet files to `data_split_output/`:
 # 
-# - `loaddata_train.csv`: sites from non-heldout wells in the configured training domain.
-# - `loaddata_heldout.csv`: all sites from one sampled well per condition group.
-# - `loaddata_eval.csv`: sites outside the configured training domain.
-# 
-# The CSVs retain the source DataFrame index as an additional column. Downstream readers should ignore it unless that index is intentionally used for traceability.
+# - `loaddata_train.parquet`: sites from non-heldout wells in the configured training domain.
+# - `loaddata_heldout.parquet`: all sites from one sampled well per condition group.
+# - `loaddata_eval.parquet`: sites outside the configured training domain.
+# - `sc_profiles.parquet`: single cell level metadata for object location.
