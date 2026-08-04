@@ -67,11 +67,12 @@ def _fingerprint_degradation_specs(
     return hashlib.sha256(payload).hexdigest()
 
 
-def _degrade_record_schema(ref_schema: pa.Schema) -> pa.Schema:
+def _degrade_record_schema(ref_schema: pa.Schema, base_seed: int) -> pa.Schema:
     """
     Create a new schema for degraded records based on the reference schema.
 
     :param ref_schema: The schema of the reference records.
+    :param base_seed: Base random seed used to derive per-page transform seeds.
     :return: A new schema for degraded records.
     """
 
@@ -80,6 +81,7 @@ def _degrade_record_schema(ref_schema: pa.Schema) -> pa.Schema:
         b"pixel_encoding": b"C-contiguous little-endian float32",
         b"albumentations_version": A.__version__.encode(),
         b"opencv_version": cv2.__version__.encode(),
+        b"base_seed": str(base_seed).encode(),
     }
 
     degrade_schema = ref_schema.append(pa.field("spec_fingerprint", pa.string())).with_metadata(
@@ -122,7 +124,7 @@ def write_degraded_images(
             ref_tab = pq.read_table(
                 ref_shard,
             )
-            degrade_schema = _degrade_record_schema(ref_tab.schema)
+            degrade_schema = _degrade_record_schema(ref_tab.schema, base_seed)
             references = ref_tab.to_pylist()
 
             for reference in references:
