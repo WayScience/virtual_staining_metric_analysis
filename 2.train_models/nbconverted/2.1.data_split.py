@@ -15,7 +15,7 @@
 # 
 # A fixed random seed makes the well selection reproducible as long as the input data and group ordering remain unchanged.
 
-# In[1]:
+# In[ ]:
 
 
 from pathlib import Path
@@ -29,8 +29,6 @@ import pyarrow.dataset as ds
 from utils.validate_config import (
     load_yaml_config,
     require_config_directory,
-    require_config_string,
-    require_config_value,
 )
 
 
@@ -100,7 +98,6 @@ for platemap in barcode_df['platemap_file'].unique():
     df['platemap_file'] = platemap
     platemap_df = pd.concat([platemap_df, df], ignore_index=True)
 barcode_platemap_df = pd.merge(barcode_df, platemap_df, on='platemap_file', how='inner').rename(columns={'well': 'Metadata_Well'})
-barcode_platemap_df
 
 
 # In[5]:
@@ -109,7 +106,6 @@ barcode_platemap_df
 dataset = ds.dataset(loaddata_files, format="parquet")
 table = dataset.to_table()
 loaddata_df = table.to_pandas()
-loaddata_df.head()
 
 
 # In[6]:
@@ -123,7 +119,7 @@ loaddata_barcode_platemap_df = pd.merge(
     validate='m:1'
 )
 
-loaddata_barcode_platemap_df.head()
+print(loaddata_barcode_platemap_df.head())
 
 
 # ## Splitting
