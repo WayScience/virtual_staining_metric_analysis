@@ -14,12 +14,14 @@ import cv2
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
+import lance
 from tqdm.auto import tqdm
 
 from utils.apply_degradation import DegradationSpec, build_degradation_stack
 
 from .encoding import decode_pixels, encode_pixels
-from .parquet_writer import Writer
+from .iter_data import iter_lance_fragments
+from .parquet_writer import LanceWriter, Writer
 from .write_reference_image import PARQUET_WRITE_ROOT, SHARD_SIZE
 
 
@@ -92,21 +94,55 @@ def _degrade_record_schema(ref_schema: pa.Schema, base_seed: int) -> pa.Schema:
 
 
 def write_degraded_images(
-    reference_shards: list[Path],
+    *,
     specs: list[DegradationSpec],
     output_dir: Path,
     base_seed: int,
     overwrite: bool = False,
+    reference_shards: list[Path] | None = None,
+    reference_lance_dir: Path | None = None,
 ) -> None:
     """
     Write degraded images to Parquet files based on reference shards and degradation specs.
     Operates on a per-shard basis, reading reference images, applying degradations, and writing results.
     """
 
-    write_path = output_dir / PARQUET_WRITE_ROOT
+    if reference_shards is None and reference_lance_dir is None:
+        raise ValueError("Either reference_shards or reference_lance_dir must be provided.")
+    if reference_shards is not None and reference_lance_dir is not None:
+        raise ValueError("Only one of reference_shards or reference_lance_dir should be provided.")
+    if reference_shards is not None:
+        print("Writing degraded images from reference parquet shards.")
+        write_path = output_dir / PARQUET_WRITE_ROOT
+        _Writer = Writer
+        progress = tqdm(
+            reference_shards,
+            total=len(reference_shards),
+            desc="Writing degraded images",
+        )
+
+        def process_item(item):
+            table = pq.read_table(item)
+            return table
+    else:
+        print("Writing degraded images from Lance reference")
+        write_path = output_dir
+        _Writer = LanceWriter
+        dataset = lance.dataset(reference_lance_dir)
+        fragment_count = len(dataset.get_fragments())
+        progress = tqdm(
+            iter_lance_fragments(reference_lance_dir),
+            desc="Writing degraded images",
+            total=fragment_count,
+        )
+
+        def process_item(item):
+            _, _, table = item
+            return table
+
     write_path.mkdir(parents=True, exist_ok=True)
 
-    with Writer(
+    with _Writer(
         output_dir=write_path,
         schema=None,
         overwrite=overwrite,
@@ -114,16 +150,8 @@ def write_degraded_images(
     ) as writer:
         fingerprint = _fingerprint_degradation_specs(specs)
 
-        progress = tqdm(
-            reference_shards,
-            total=len(reference_shards),
-            desc="Writing degraded images",
-        )
-
-        for ref_shard in progress:
-            ref_tab = pq.read_table(
-                ref_shard,
-            )
+        for item in progress:
+            ref_tab = process_item(item)
             degrade_schema = _degrade_record_schema(ref_tab.schema, base_seed)
             references = ref_tab.to_pylist()
 

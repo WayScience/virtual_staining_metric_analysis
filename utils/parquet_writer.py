@@ -1,31 +1,9 @@
 from pathlib import Path
 from typing import Any, Self
 
+import lance
 import pyarrow as pa
 import pyarrow.parquet as pq
-
-
-def _write_shard(
-    shard_path: Path,
-    rows: list[dict[str, Any]],
-    schema: pa.Schema,
-    overwrite: bool,
-    compression: str = "zstd",
-) -> None:
-    """
-    Write a single Parquet shard, validated against the provided schema.
-    If overwrite is True, existing files will be replaced.
-    """
-    if shard_path.exists() and not overwrite:
-        return
-
-    table = pa.Table.from_pylist(rows, schema=schema)
-
-    temp_path = shard_path.with_name(f".{shard_path.name}.tmp")
-    temp_path.unlink(missing_ok=True)
-
-    pq.write_table(table, temp_path, compression=compression)
-    temp_path.replace(shard_path)
 
 
 class Writer:
@@ -79,6 +57,32 @@ class Writer:
         self._shard_index = 0
         self._closed = False
 
+    def _write_table(
+        self,
+        table: pa.Table,
+        chunk_index: int,
+    ) -> None:
+        """
+        Write a PyArrow Table to a Parquet shard.
+
+        :param table: PyArrow Table to write.
+        :param chunk_index: Index of the chunk for naming the shard file.
+        """
+        shard_path = self.output_dir / f"part-{chunk_index:06d}.parquet"
+
+        if shard_path.exists() and not self.overwrite:
+            return
+
+        temp_path = shard_path.with_name(f".{shard_path.name}.tmp")
+        temp_path.unlink(missing_ok=True)
+
+        pq.write_table(
+            table,
+            temp_path,
+            compression=self.compression,
+        )
+        temp_path.replace(shard_path)
+
     def _flush(self) -> None:
         """
         Flush the accumulated rows to a Parquet shard if there are any rows to write.
@@ -88,17 +92,24 @@ class Writer:
         if self._active_schema is None:
             raise RuntimeError("Cannot flush buffered rows without an active schema.")
 
-        shard_path = self.output_dir / f"part-{self._shard_index:06d}.parquet"
-        _write_shard(
-            shard_path=shard_path,
-            rows=self._rows,
+        table = pa.Table.from_pylist(
+            self._rows,
             schema=self._active_schema,
-            overwrite=self.overwrite,
-            compression=self.compression,
+        )
+
+        self._write_table(
+            table=table,
+            chunk_index=self._shard_index,
         )
 
         self._rows.clear()
         self._shard_index += 1
+
+    # def flush(self) -> None:
+    #     """Public method for finish the current logical chunk."""
+    #     if self._closed:
+    #         raise RuntimeError("Cannot flush a closed writer.")
+    #     self._flush()
 
     def add_row(self, row: dict[str, Any], schema: pa.Schema | None = None) -> None:
         """
@@ -164,3 +175,73 @@ class Writer:
 
         # Do not suppress exceptions raised inside the with block.
         return False
+
+
+class LanceWriter(Writer):
+    """Append buffered Arrow tables to one Lance dataset."""
+
+    def __init__(
+        self,
+        output_dir: Path,
+        schema: pa.Schema | None = None,
+        overwrite: bool = False,
+        shardsize: int = 128,
+        dataset_name: str = "data.lance",
+    ) -> None:
+        super().__init__(
+            output_dir=output_dir,
+            schema=schema,
+            overwrite=overwrite,
+            shardsize=shardsize,
+        )
+
+        self.dataset_path = output_dir / dataset_name
+        self._first_write = True
+
+        if self.dataset_path.exists() and not overwrite:
+            dataset = lance.dataset(self.dataset_path)
+
+            if schema is not None and not dataset.schema.equals(
+                schema,
+                check_metadata=False,
+            ):
+                raise ValueError(
+                    "Existing Lance dataset schema does not match the requested writer schema."
+                )
+
+            self._existing_fragment_count = len(dataset.get_fragments())
+        else:
+            self._existing_fragment_count = 0
+
+    def _write_table(
+        self,
+        table: pa.Table,
+        chunk_index: int,
+    ) -> None:
+        # Mimic the existing pause/resume behavior by skipping already
+        # committed logical chunks.
+        if (
+            self.dataset_path.exists()
+            and not self.overwrite
+            and chunk_index < self._existing_fragment_count
+        ):
+            return
+
+        if self._first_write and self.overwrite:
+            mode = "overwrite"
+        elif self.dataset_path.exists():
+            mode = "append"
+        else:
+            mode = "create"
+
+        lance.write_dataset(
+            table,
+            self.dataset_path,
+            mode=mode,
+            # Prevent this individual buffered table from being split based
+            # on its row count under normal circumstances.
+            max_rows_per_file=max(table.num_rows, 1),
+            max_rows_per_group=max(table.num_rows, 1),
+        )
+
+        self._first_write = False
