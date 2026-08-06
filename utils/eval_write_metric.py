@@ -1,3 +1,10 @@
+"""
+Helper module for orchestrating metric evaluation and results writing.
+Main helper function is `evaluate_lance_metrics_to_parquet`,
+    which accepts a torch DataLoader of reference and degraded image stacks
+    along with metadata, and write parquet shards of metric results to disk.
+"""
+
 from collections.abc import Mapping, Sequence
 from contextlib import ExitStack
 from dataclasses import dataclass
@@ -20,6 +27,11 @@ EVAL_DTYPE = torch.float32
 
 @dataclass(frozen=True)
 class _PreparedBatch:
+    """
+    Data class for holding broadcasted and flattened batch data,
+        along with original metadata and batch/page counts for reshaping back.
+    """
+
     degraded: Tensor
     reference: Tensor
     metadata: Sequence[dict[str, Any]]
@@ -28,6 +40,9 @@ class _PreparedBatch:
 
 
 def _prep_metrics(metric_specs: Mapping[str, MetricSpec], device: torch.device) -> None:
+    """
+    Helper function to move metrics to proper device and dtype for evaluation.
+    """
     for spec in metric_specs.values():
         metric = spec.metric
         if isinstance(metric, torch.nn.Module):
@@ -36,15 +51,26 @@ def _prep_metrics(metric_specs: Mapping[str, MetricSpec], device: torch.device) 
 
 
 def _prep_batch(batch: Mapping[str, Any]) -> _PreparedBatch:
+    """
+    Prepare a batch of paired images for metric evaluation by broadcasting and flattening.
+    This is needed because the reference slice needs to be expanded to
+        match the number of degraded variants for each reference image,
+        and certain metrics require duplication along the channel dimension,
+        so the channel dimension must be available.
+    """
 
-    degraded = batch["degraded_stack"].to(dtype=EVAL_DTYPE)
-    reference = batch["reference_image"].to(dtype=EVAL_DTYPE)
-    metadata = batch["degradation_metadata"]
+    # V is the page count, corresponding to the number of degraded variants
+    # for each reference image
+    degraded = batch["degraded_stack"].to(dtype=EVAL_DTYPE)  # N, V, H, W
+    reference = batch["reference_image"].to(dtype=EVAL_DTYPE)  # N, 1, H, W
+    metadata = batch["degradation_metadata"]  # N rows
 
-    # page count is number of degraded variant with respect to each reference
     batch_size, page_count, height, width = degraded.shape
 
+    # flatten along N, V so make the channel dimension available.
     degraded_flat = degraded.reshape(batch_size * page_count, 1, height, width)
+    # broadcast the reference image to match the page count of degraded images,
+    # then flatten along N, V
     reference_flat = (
         reference[:, None, :, :]
         .expand(-1, page_count, -1, -1)  # broadcast ref to match page count of degraded
@@ -64,6 +90,7 @@ def _build_output_schema(
     metadata_row: Mapping[str, Any],
     catalog_row: Mapping[str, Any],
 ) -> pa.Schema:
+    """Schema builder for metric output. Contracts the metric value dtype."""
 
     metadata_columns = set(metadata_row)
     catalog_columns = set(catalog_row)
@@ -92,6 +119,10 @@ def _open_metric_writers(
     overwrite: bool,
     shard_size: int = 128,
 ) -> dict[str, Writer]:
+    """
+    Helper function for initializing Parquet writers for each metric,
+        using the provided schema and output directories.
+    """
 
     return {
         name: stack.enter_context(
@@ -111,6 +142,15 @@ def _match_input_channels(
     tensor: Tensor,
     spec: MetricSpec,
 ) -> Tensor:
+    """
+    Helper for duplicating channel dimensions to needed number.
+    Typically the expansion is either 1->1 = no-op or 1->3 = RGB duplication.
+    However, any positive integer is allowed for flexibility.
+
+    :param tensor: Input tensor of shape (N * V, 1, H, W) (from _prep_batch)
+    :param spec: MetricSpec containing the required input channel count.
+    :return: Tensor of shape (N * V, C, H, W) where C is spec.input_channels.
+    """
     if spec.input_channels == 1:
         return tensor
     if spec.input_channels > 1:  # some natural image metrics require 3-channel input
@@ -126,6 +166,18 @@ def _evaluate_metric(
     *,
     device: torch.device,
 ) -> Tensor:
+    """
+    Helper function to evaluate a metric over a batch of paired images,
+        returning a 1D tensor of metric values for each image in the batch.
+
+    :param metric: The metric function or module to evaluate.
+    :param spec: The MetricSpec containing metric configuration.
+    :param degraded: A tensor of degraded images, shape (N*V, C, H, W).
+    :param reference: A tensor of reference images, shape (N*V, C, H, W).
+    :param device: The device to perform evaluation on.
+    :return: A 1D tensor of metric values, shape (N*V, ).
+    """
+
     total_images = degraded.shape[0]
     value_chunks: list[Tensor] = []
     kwargs = dict(spec.kwargs)
@@ -162,6 +214,11 @@ def _write_metric_rows(
     catalog_rows: Sequence[dict[str, Any]],
     scores: Tensor,
 ) -> None:
+    """
+    Helper function to write metric evaluation results to a Parquet writer.
+    Each row combines metadata, catalog information, and the computed metric value.
+    """
+
     score_rows = scores.tolist()
 
     for metadata_row, record_scores in zip(
@@ -193,15 +250,29 @@ def evaluate_lance_metrics_to_parquet(
     device: torch.device | str = "cpu",
     shard_size: int = 128,
 ) -> dict[str, Path]:
-    """Evaluate metrics over paired Lance batches and write Parquet outputs."""
+    """
+    Evaluate metrics over paired batches from torch dataloader and write Parquet outputs.
+
+    :param metric_specs: Mapping of metric names to MetricSpec objects.
+    :param loader: DataLoader yielding batches of paired reference and degraded images.
+    :param degradation_catalog: DataFrame containing catalog information for degraded images.
+    :param output_root: Root directory for output Parquet files.
+    :param overwrite: Whether to overwrite existing output files.
+    :param device: Device to perform metric evaluation on.
+    :param shard_size: Number of rows per Parquet shard.
+    :return: Mapping of metric names to output Parquet directory paths.
+    """
 
     device = torch.device(device)
+
+    # move metrics to the specified device and set them to evaluation mode
     _prep_metrics(metric_specs, device)
 
     output_dirs = {name: output_root / name / "parquet" for name in metric_specs}
     for path in output_dirs.values():
         path.mkdir(parents=True, exist_ok=True)
 
+    # convert the degradation catalog to a list of dictionaries for easier row-wise access
     catalog_rows = pa.Table.from_pandas(degradation_catalog, preserve_index=False).to_pylist()
 
     writers: dict[str, Writer] | None = None
@@ -217,6 +288,7 @@ def evaluate_lance_metrics_to_parquet(
         torch.inference_mode(),
     ):
         for raw_batch in progress:
+            # initial flattening and broadcasting of the batch for metric evaluation
             batch: _PreparedBatch = _prep_batch(raw_batch)
 
             if writers is None:
@@ -230,6 +302,8 @@ def evaluate_lance_metrics_to_parquet(
                 )
 
             for name, spec in metric_specs.items():
+                # evaluate the metric over the prepared batch, additional
+                # channel-wise broadcasting is handled inside _evaluate_metric
                 values = _evaluate_metric(
                     spec.metric,
                     spec,
@@ -238,11 +312,16 @@ def evaluate_lance_metrics_to_parquet(
                     device=device,
                 )
 
+                # reshape the flat values back to (batch_size, page_count) for writing
                 scores = values.reshape(
                     batch.batch_size,
                     batch.page_count,
                 )
 
+                # write 1 row per (reference, degraded-variant/page, metric) combination
+                # attaching metadata associated with reference (batch.metadata),
+                # metadata associated with degraded variant (catalog_rows),
+                # and the computed metric value
                 _write_metric_rows(
                     writers[name],
                     batch.metadata,
