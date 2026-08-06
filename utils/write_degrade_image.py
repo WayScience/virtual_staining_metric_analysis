@@ -11,10 +11,10 @@ from typing import Any
 
 import albumentations as A
 import cv2
+import lance
 import numpy as np
 import pyarrow as pa
 import pyarrow.parquet as pq
-import lance
 from tqdm.auto import tqdm
 
 from utils.apply_degradation import DegradationSpec, build_degradation_stack
