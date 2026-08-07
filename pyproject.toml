@@ -15,6 +15,7 @@ dependencies = [
     "opencv-python==4.10.0.84",
     "albumentations==2.0.1",
     "pyarrow",
+    "pylance",
     "tifffile",
     "numpy>=1.26",
     "pandas>=2.2",

@@ -5,9 +5,9 @@ Intended use is for embedding images in Parquet records.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from math import prod
-from typing import Literal, TypedDict
+from typing import Any, Literal, TypedDict
 
 import numpy as np
 import numpy.typing as npt
@@ -196,3 +196,43 @@ def decode_pixels(
         return decoded.copy(order="C")
 
     return decoded
+
+
+def decode_pixel_record(
+    record: Mapping[str, Any],
+    *,
+    expected_axes: str | None = None,
+    copy: bool = False,
+) -> tuple[npt.NDArray[np.float32], dict[str, Any]]:
+    """
+    Decode an image directly from a Parquet-derived record mapping.
+
+    The record must contain ``pixels``, ``shape``, ``axes``, ``dtype``,
+    and ``byte_order`` fields.
+    """
+    required_fields = {
+        "pixels",
+        "shape",
+        "axes",
+        "dtype",
+        "byte_order",
+    }
+    missing = required_fields.difference(record)
+
+    if missing:
+        missing_text = ", ".join(sorted(missing))
+        raise KeyError(f"Pixel record is missing required fields: {missing_text}.")
+
+    image = decode_pixels(
+        pixel_bytes=record["pixels"],
+        shape=record["shape"],
+        dtype=record["dtype"],
+        byte_order=record["byte_order"],
+        axes=record["axes"],
+        expected_axes=expected_axes,
+        copy=copy,
+    )
+
+    metadata = {k: v for k, v in record.items() if k not in required_fields}
+
+    return image, metadata

@@ -7,11 +7,12 @@
 # 2. Applies degrading image transformations from albumentations and cv2 to reference patches.
 # 3. Writies results to disks, keeping track of files to reference image metadata.
 
-# In[ ]:
+# In[1]:
 
 
 from collections import Counter
 
+import lance
 import pandas as pd
 import pyarrow.parquet as pq
 import matplotlib.pyplot as plt
@@ -22,6 +23,7 @@ from utils.validate_config import (
     require_config_membership,
     require_config_value,
 )
+from utils.iter_data import iter_lance_fragments
 from utils.encoding import decode_pixels
 from utils.degrade_spec import build_degradation_specs, specs_to_frame
 from utils.apply_degradation import build_degradation_stack
@@ -30,7 +32,7 @@ from utils.write_degrade_image import write_degraded_images
 
 # ## Pathing
 
-# In[ ]:
+# In[2]:
 
 
 config = load_yaml_config("degradation_config.yaml")
@@ -43,10 +45,10 @@ if not reference_patch_dir.exists():
         "Run notebook 1.2 first."
     )
 
-reference_shards = sorted((reference_patch_dir / "parquet").glob("part-*.parquet"))
-if not reference_shards:
-    raise FileNotFoundError(
-        f"No reference Parquet shards found in {reference_patch_dir}. "
+reference_lance_dir = reference_patch_dir / "data.lance"
+if not reference_lance_dir.exists():
+    raise RuntimeError(
+        f"Reference Lance directory {reference_lance_dir} does not exist. "
         "Run notebook 1.2 first."
     )
 
@@ -60,28 +62,43 @@ degrade_patch_output_dir.mkdir(parents=True, exist_ok=True)
 
 # ## Tabulate channel count in reference images written
 
-# In[ ]:
+# In[3]:
 
+
+reference_dataset = lance.dataset(reference_lance_dir)
+reference_fragments = list(reference_dataset.get_fragments())
 
 channel_counts: Counter[str] = Counter()
-sample_shard = None
+sample_fragment_id: int | None = None
 
-for shard_path in reference_shards:
-    channel_table = pq.read_table(shard_path, columns=["channel"])
-    shard_channels = [str(value) for value in channel_table["channel"].to_pylist()]
-    channel_counts.update(shard_channels)
-    if sample_shard is None and shard_channels:
-        sample_shard = shard_path
+for fragment in reference_fragments:
+    for batch in fragment.scanner(columns=["channel"]).to_batches():
+        channel_values = batch["channel"].to_pylist()
 
-if sample_shard is None:
+        channel_counts.update(
+            str(value)
+            for value in channel_values
+        )
+
+        if sample_fragment_id is None and channel_values:
+            sample_fragment_id = fragment.fragment_id
+
+if sample_fragment_id is None:
     raise ValueError("No reference records found.")
 
 reference_record_count = sum(channel_counts.values())
+
 print(
     f"Found {reference_record_count:,} target reference records "
-    f"across {len(reference_shards):,} reference shards."
+    f"across {len(reference_fragments):,} reference fragments."
 )
-pd.Series(channel_counts, name="reference_count")
+
+reference_counts = pd.Series(
+    channel_counts,
+    name="reference_count",
+)
+
+reference_counts
 
 
 # ## Degradation catalog
@@ -93,24 +110,21 @@ pd.Series(channel_counts, name="reference_count")
 # 
 # The 36 page catalog is defined here based on seed derived from the reference stem and base seed.
 
-# In[ ]:
+# In[4]:
 
 
 degradation_specs = build_degradation_specs()
 degradation_catalog = specs_to_frame(degradation_specs)
 degradation_catalog.head()
+degradation_catalog.to_csv(analysis_dir / "degradation_catalog.csv", index=False)
 
 
 # ## Preflight example degradation on small batch
 
-# In[ ]:
+# In[5]:
 
 
-sample_table = pq.read_table(
-    sample_shard,
-).slice(0, 1)
-if len(sample_table) != 1:
-    raise RuntimeError("Could not resolve one sample reference record.")
+_, _, sample_table = next(iter_lance_fragments(reference_lance_dir))
 
 sample_record = sample_table.to_pylist()[0]
 sample_image = decode_pixels(
@@ -181,7 +195,7 @@ plt.show()
 
 
 write_degraded_images(
-    reference_shards,
+    reference_lance_dir=reference_lance_dir,
     specs=degradation_specs,
     output_dir=degrade_patch_output_dir,
     base_seed=42,

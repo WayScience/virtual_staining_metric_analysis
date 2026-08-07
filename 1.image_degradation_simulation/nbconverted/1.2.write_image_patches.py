@@ -13,6 +13,7 @@
 from pathlib import Path
 
 import pyarrow.dataset as ds
+import numpy as np
 from virtual_stain_flow.datasets.crop_dataset import CropImageDataset
 from virtual_stain_flow.datasets.base_dataset import BaseImageDataset
 from virtual_stain_flow.transforms.normalizations import MaxScaleNormalize
@@ -40,6 +41,8 @@ analysis_dir = require_config_directory(config, "analysis_out_dir", create=True)
 local_profile_dir = require_config_directory(config, "local_profile_dir")
 channels = require_config_value(config, "channels")
 input_channel = require_config_membership(config, "input_channel", "channels")
+subsample_n = require_config_value(config, "simulation_subsample_n")
+subsample_seed = require_config_value(config, "simulation_subsample_seed")
 
 metadata_download_path = Path("metadata")
 metadata_download_path.mkdir(parents=True, exist_ok=True)
@@ -170,15 +173,38 @@ crop_index.rename(columns={"crop_dataset_index": "dataset_index"}, inplace=True)
 crop_index.head()
 
 
+# Subsample by well to make selection of crops more balanced (across seeding density and cell lines)
+
+# In[7]:
+
+
+group_cols = ["Metadata_Well", "Metadata_Plate"]
+
+rng = np.random.default_rng(subsample_seed)
+
+crop_index_sampled = (
+    crop_index
+    .assign(_sample_order=rng.random(len(crop_index)))
+    .sort_values(group_cols + ["_sample_order"])
+    .groupby(group_cols, sort=False)
+    .head(subsample_n)
+    .drop(columns="_sample_order")
+    .sort_index()
+)
+
+crop_index_sampled.head()
+
+
 # ## Write normalized channel patches as embedded Parquet records
 # 
 # The writer stores one self-describing row per crop/channel under `reference_records/`. Each row contains a stable `record_id`, the normalized float32 `YX` pixel buffer, its shape and dtype contract, source-image provenance, crop geometry, and all image-level metadata. Bounded Parquet shards are written through validated temporary files and valid completed shards are reused on rerun. Reference and future degraded-stack datasets use the same record envelope and map through the same `record_id`.
 
-# In[7]:
+# In[8]:
 
 
 write_reference_images(
     path=output_dir,
     dataset=cropped_dataset,
-    metadata=crop_index,
+    metadata=crop_index_sampled,
+    backend="lance"
 )
