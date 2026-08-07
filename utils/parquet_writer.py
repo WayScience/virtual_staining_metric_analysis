@@ -105,12 +105,6 @@ class Writer:
         self._rows.clear()
         self._shard_index += 1
 
-    # def flush(self) -> None:
-    #     """Public method for finish the current logical chunk."""
-    #     if self._closed:
-    #         raise RuntimeError("Cannot flush a closed writer.")
-    #     self._flush()
-
     def add_row(self, row: dict[str, Any], schema: pa.Schema | None = None) -> None:
         """
         Main entry point for adding a row to the writer. The row is appended to the internal buffer.
