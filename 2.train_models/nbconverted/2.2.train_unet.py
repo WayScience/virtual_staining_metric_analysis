@@ -1,8 +1,12 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Train UNet model
-# Parametrized script to train under specified DATA split
+# # Train 1 UNet model on train condition (confluence) and predicting specific target channels.
+# Parametrized notebook/script to train under environment variable configured input, target and confluence settings.
+# 
+# One run of notebook/script will only train model for one target, confluence combiantion. 
+# The notebook is largely for demo purpose on smaller train epoch and batch size setting.
+# Please use  
 
 # In[1]:
 
@@ -20,7 +24,8 @@ from torchmetrics.image import MultiScaleStructuralSimilarityIndexMeasure
 
 from utils.train_utils import (
     require_env, 
-    require_positive_int_env, 
+    require_positive_int_env,
+    require_bool_env, 
     build_dataset_inputs,
 )
 
@@ -44,7 +49,7 @@ from virtual_stain_flow.vsf_logging.callbacks.PlotCallback import PlotPrediction
 # In[2]:
 
 
-ON_HPC = True
+ON_HPC = require_bool_env("ON_HPC", default=False)
 
 # only needed if ON_HPC
 EXPT_NAME = "pediatric_cancer_virtual_stain_training"
@@ -64,7 +69,7 @@ CONFLUENCE = require_positive_int_env("CONFLUENCE", default=1000)
 
 # smallest patch dataset size is around 2900
 # ensure that all train conditions have the same number of training samples
-SUBSET_N = 2_900 
+SUBSET_N = 2_900 if ON_HPC else 300 # for local testing
 
 # more than what would take for the model to converge, optimal model
 # will be determined at the end by best validation loss
@@ -365,7 +370,7 @@ logger = MlflowLogger(
 )
 
 
-# In[ ]:
+# In[8]:
 
 
 trainer.train(logger=logger, epochs=EPOCHS)

@@ -34,6 +34,7 @@ cd /path/to/project/2.train_models/nbconverted
 # ---------------------------------------------------------------------------
 
 INPUT_CHANNEL="OrigBrightField"
+ON_HPC=True
 
 TARGET_CHANNELS=(
     "OrigDNA"
@@ -80,6 +81,7 @@ echo "============================================================"
 # Execute
 # ---------------------------------------------------------------------------
 
+ON_HPC="$ON_HPC" \
 INPUT_CHANNEL="$INPUT_CHANNEL" \
 TARGET_CHANNEL="$TARGET_CHANNEL" \
 CONFLUENCE="$CONFLUENCE" \

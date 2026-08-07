@@ -55,6 +55,23 @@ def require_positive_int_env(
     return value
 
 
+def require_bool_env(name: str, default: bool | None = None) -> bool:
+    """Return a required configuration value parsed as a boolean."""
+    raw_value = require_env(
+        name,
+        default=None if default is None else str(default),
+    )
+
+    if raw_value.lower() in ("true", "1", "yes"):
+        return True
+    elif raw_value.lower() in ("false", "0", "no"):
+        return False
+    else:
+        raise RuntimeError(
+            f"Environment variable {name!r} must be a boolean (true/false), but received {raw_value!r}."
+        )
+
+
 def _merge_path_filename(
     row: pd.Series,
     chan: str,
