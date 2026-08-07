@@ -180,8 +180,17 @@ class LanceWriter(Writer):
         schema: pa.Schema | None = None,
         overwrite: bool = False,
         shardsize: int = 128,
-        dataset_name: str = "data.lance",
+        dataset_name: str | None = None,
     ) -> None:
+
+        # Validate the dataset_name parameter based on the overwrite flag
+        if not overwrite:
+            if dataset_name is None:
+                raise ValueError("dataset_name must be provided when overwrite is False.")
+        else:
+            if dataset_name is None:
+                dataset_name = "dataset.lance"
+
         super().__init__(
             output_dir=output_dir,
             schema=schema,
