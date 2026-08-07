@@ -1,8 +1,9 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # This notebook creates train, heldout, and evaluation splits
-# 
+# # Create train, heldout, and evaluation splits for model training.
+# Train and heldout set will exclusively contain U2-OS cells from plate 1. 
+# Evaluation split will contain all other cells that is not plate U2-OS.
 # The split is designed to keep all sites from a well together, preventing images from the same well from appearing in both training and heldout data. 
 # 
 # ## Split procedure
@@ -22,8 +23,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
+import polars as pl
 import pyarrow.dataset as ds
 
 from utils.validate_config import (
@@ -74,11 +74,15 @@ output_dir.mkdir(parents=True, exist_ok=True)
 # In[3]:
 
 
-TRAIN_CONDITION_KWARGS = {
-    'cell_line': 'U2-OS',
-    'platemap_file': 'Assay_Plate1_platemap',
-    'seeding_density': [1_000, 2_000, 4_000, 8_000, 12_000]
-}
+CELL_COLUMN = 'cell_line'
+TRAIN_CELL = 'U2-OS'
+PLATEMAP_COLUMN = 'platemap_file'
+TRAIN_PLATE = 'Assay_Plate1_platemap'
+DENSITY_COLUMN = 'seeding_density'
+TRAIN_SEEDING_DENSITIES = [1_000, 2_000, 4_000, 8_000, 12_000]
+
+TRAIN_CONDITION_COLS = [CELL_COLUMN, PLATEMAP_COLUMN, DENSITY_COLUMN]
+
 SITE_COLUMN = 'Metadata_Site'
 WELL_COLUMN = 'Metadata_Well'
 PLATE_COLUMN = 'Metadata_Plate'
@@ -92,11 +96,12 @@ PLATE_COLUMN = 'Metadata_Plate'
 
 barcode_df = pd.read_csv(barcode_file).rename(columns={'barcode': 'Metadata_Plate'})
 
-platemap_df = pd.DataFrame()
+platemap_df_contents = []
 for platemap in barcode_df['platemap_file'].unique():
     df = pd.read_csv(platemap_dir / f'{platemap}.csv')
     df['platemap_file'] = platemap
-    platemap_df = pd.concat([platemap_df, df], ignore_index=True)
+    platemap_df_contents.append(df)
+platemap_df = pd.concat(platemap_df_contents, ignore_index=True)
 barcode_platemap_df = pd.merge(barcode_df, platemap_df, on='platemap_file', how='inner').rename(columns={'well': 'Metadata_Well'})
 
 
@@ -127,22 +132,24 @@ print(loaddata_barcode_platemap_df.head())
 # In[7]:
 
 
-loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_df.copy()
-# Apply every configured condition to define the train/heldout candidate pool.
-for k, v in TRAIN_CONDITION_KWARGS.items():
-    if isinstance(v, list):
-        loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_train_df[loaddata_barcode_platemap_train_df[k].isin(v)]
-    else:
-        loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_train_df[loaddata_barcode_platemap_train_df[k] == v]
-    if len(loaddata_barcode_platemap_train_df) == 0:####
-        raise ValueError(f'No data found for {k}={v}')
-print(f"{loaddata_barcode_platemap_train_df.shape[0]} sites for train and heldout")
+train_mask = (
+    loaddata_barcode_platemap_df[CELL_COLUMN].eq(TRAIN_CELL)
+    & loaddata_barcode_platemap_df[PLATEMAP_COLUMN].eq(TRAIN_PLATE)
+    & loaddata_barcode_platemap_df[DENSITY_COLUMN].isin(TRAIN_SEEDING_DENSITIES)
+)
 
-# Preserve all rows outside the candidate pool as the out-of-domain evaluation split.
-loaddata_barcode_platemap_eval_df = loaddata_barcode_platemap_df.loc[
-    ~loaddata_barcode_platemap_df.index.isin(loaddata_barcode_platemap_train_df.index)
-]
-print(f"{loaddata_barcode_platemap_eval_df.shape[0]} sites for evaluation")
+loaddata_barcode_platemap_train_df = loaddata_barcode_platemap_df.loc[train_mask]
+loaddata_barcode_platemap_eval_df = loaddata_barcode_platemap_df.loc[~train_mask]
+
+if loaddata_barcode_platemap_train_df.empty:
+    raise ValueError("No data found matching training conditions.")
+
+print(
+    f"{len(loaddata_barcode_platemap_train_df)} sites for train and heldout"
+)
+print(
+    f"{len(loaddata_barcode_platemap_eval_df)} sites for evaluation"
+)
 
 
 # The candidate pool is further stratified by the condition columns in `TRAIN_CONDITION_KWARGS`. 
@@ -159,7 +166,7 @@ seed = 42
 np.random.seed(seed)
 
 # Stratify by the same metadata fields used to define the candidate pool.
-grouped = loaddata_barcode_platemap_train_df.groupby(list(TRAIN_CONDITION_KWARGS.keys()))
+grouped = loaddata_barcode_platemap_train_df.groupby(TRAIN_CONDITION_COLS)
 
 heldout_list = []
 train_list = []
@@ -172,7 +179,7 @@ for _, group in grouped:
     loaddata_held_out_df = group[group[WELL_COLUMN].isin(held_out_well)].copy()
     loaddata_train_df = group[group[WELL_COLUMN].isin(train_wells)].copy()
 
-    condition = group[list(TRAIN_CONDITION_KWARGS.keys())].iloc[0].to_dict()
+    condition = group[TRAIN_CONDITION_COLS].iloc[0].to_dict()
     print(f"For Condition: {condition} Heldout well: {held_out_well} Train wells: {train_wells}")
 
     heldout_list.append(loaddata_held_out_df)
@@ -195,27 +202,32 @@ loaddata_barcode_platemap_eval_df.to_parquet(output_dir / 'loaddata_eval.parquet
 # In[9]:
 
 
-profile_dataset = ds.dataset(profile_files, format="parquet")
+schemas = [pl.read_parquet_schema(path) for path in profile_files]
 
-fragments = list(profile_dataset.get_fragments())
-shared_columns = set.intersection(
-    *(set(fragment.physical_schema.names) for fragment in fragments)
-)
+shared_columns = set.intersection(*(set(schema) for schema in schemas))
 shared_meta_columns = [
     column
-    for column in profile_dataset.schema.names
+    for column in schemas[0]
     if column.startswith("Metadata_") and column in shared_columns
 ]
+
 if not shared_meta_columns:
     raise ValueError("Profile Parquet files have no shared Metadata_ columns.")
 
-profiles = profile_dataset.to_table(columns=shared_meta_columns)
-present_plates = pa.array(list(loaddata_barcode_platemap_eval_df['Metadata_Plate'].unique()))
-profiles = profiles.filter(pa.compute.is_in(profiles['Metadata_Plate'], present_plates))
+if "Metadata_Plate" not in shared_meta_columns:
+    raise ValueError("Metadata_Plate is not shared across all profile Parquet files.")
 
-pq.write_table(
-    profiles,
-    output_dir / "sc_profiles.parquet",
+present_plates = (
+    loaddata_barcode_platemap_eval_df["Metadata_Plate"]
+    .unique()
+    .tolist()
+)
+
+(
+    pl.scan_parquet(profile_files)
+    .select(shared_meta_columns)
+    .filter(pl.col("Metadata_Plate").is_in(present_plates))
+    .sink_parquet(output_dir / "sc_profiles.parquet")
 )
 
 
