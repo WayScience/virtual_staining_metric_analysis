@@ -105,8 +105,7 @@ def build_dataset_inputs(
         target_chan = [target_chan]
 
     target_paths = {
-        chan: loaddata.apply(lambda row: _merge_path_filename(row, chan), axis=1).values
-        for chan in target_chan
+        chan: loaddata.apply(_merge_path_filename, axis=1, chan=chan).values for chan in target_chan
     }
 
     image_file_index = pd.DataFrame(
@@ -117,24 +116,23 @@ def build_dataset_inputs(
     )
 
     hcat_df = pd.concat([image_file_index, df_meta], axis=1)
-    if profile is not None:
+    if profile is None:
+        return hcat_df, None
 
-        df1 = hcat_df
-        df2 = profile.reset_index(drop=True).copy()
-        df1["_iloc1"] = df1.index
-        df2["_iloc2"] = df2.index
+    df1 = hcat_df
+    df2 = profile.reset_index(drop=True).copy()
+    df1["_iloc1"] = df1.index
+    df2["_iloc2"] = df2.index
 
-        merge_df = pd.merge(
-            df1,
-            df2,
-            on=unique_id_cols,
-            how="inner",
-            validate="one_to_many",
-        )
+    merge_df = pd.merge(
+        df1,
+        df2,
+        on=unique_id_cols,
+        how="inner",
+        validate="one_to_many",
+    )
 
-        mapping = merge_df.groupby("_iloc1")["_iloc2"].apply(list).to_dict()
-    else:
-        merge_df = hcat_df
+    mapping = merge_df.groupby("_iloc1")["_iloc2"].apply(list).to_dict()
 
     if (
         obj_coord_x_col is None
