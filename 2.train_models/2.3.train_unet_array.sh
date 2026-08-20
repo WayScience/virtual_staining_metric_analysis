@@ -33,7 +33,7 @@ cd /path/to/project/2.train_models/nbconverted
 # Parameter grid
 # ---------------------------------------------------------------------------
 
-INPUT_CHANNEL="OrigBrightField"
+INPUT_CHANNEL="OrigBrightfield"
 ON_HPC=True
 
 TARGET_CHANNELS=(
