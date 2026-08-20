@@ -84,7 +84,7 @@ def _merge_path_filename(
 def build_dataset_inputs(
     loaddata: pd.DataFrame,
     input_chan: str,
-    target_chan: str,
+    target_chan: str | list[str],
     profile: pd.DataFrame | None = None,
     unique_id_cols: list[str] | None = None,
     obj_coord_x_col: str | None = "Metadata_Cells_Location_Center_X",
@@ -95,23 +95,31 @@ def build_dataset_inputs(
     if unique_id_cols is None:
         unique_id_cols = ["Metadata_Plate", "Metadata_Well", "Metadata_Site"]
 
+    loaddata = loaddata.reset_index(drop=True).copy()
+
     df_meta = loaddata.loc[:, [col for col in loaddata.columns if col.startswith("Metadata_")]]
-    if "Metadata_time_point" not in df_meta.columns and "time_point" in loaddata.columns:
-        df_meta["Metadata_time_point"] = loaddata["time_point"]
 
     input_paths = loaddata.apply(lambda row: _merge_path_filename(row, input_chan), axis=1).values
-    target_paths = loaddata.apply(lambda row: _merge_path_filename(row, target_chan), axis=1).values
+
+    if isinstance(target_chan, str):
+        target_chan = [target_chan]
+
+    target_paths = {
+        chan: loaddata.apply(lambda row: _merge_path_filename(row, chan), axis=1).values
+        for chan in target_chan
+    }
 
     image_file_index = pd.DataFrame(
         {
             input_chan: input_paths,
-            target_chan: target_paths,
+            **target_paths,
         }
     )
 
     hcat_df = pd.concat([image_file_index, df_meta], axis=1)
     if profile is not None:
-        df1 = hcat_df.reset_index(drop=True).copy()
+
+        df1 = hcat_df
         df2 = profile.reset_index(drop=True).copy()
         df1["_iloc1"] = df1.index
         df2["_iloc2"] = df2.index
@@ -119,7 +127,7 @@ def build_dataset_inputs(
         merge_df = pd.merge(
             df1,
             df2,
-            on=unique_id_cols + ["Metadata_time_point"],
+            on=unique_id_cols,
             how="inner",
             validate="one_to_many",
         )
