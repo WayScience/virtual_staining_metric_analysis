@@ -3,6 +3,7 @@ Utilities for writing reference images to Parquet files with metadata
 """
 
 from pathlib import Path
+from typing import Literal
 
 import numpy as np
 import pandas as pd
@@ -11,7 +12,7 @@ import torch
 from tqdm.auto import tqdm
 
 from .encoding import encode_pixels
-from .parquet_writer import Writer
+from .parquet_writer import LanceWriter, Writer
 
 PARQUET_WRITE_ROOT = "parquet"
 IMAGE_RECORD_COLUMNS = {
@@ -24,6 +25,7 @@ IMAGE_RECORD_COLUMNS = {
     "byte_order",
     "source_image_file",
 }
+SHARD_SIZE = 128  # Fixed shard size for writing reference images to parquet files
 
 
 def _image_record_schema(image_metadata: pd.DataFrame) -> pa.Schema:
@@ -83,6 +85,7 @@ def write_reference_images(
     path: Path,
     dataset: torch.utils.data.Dataset,
     metadata: pd.DataFrame,
+    backend: Literal["lance", "parquet"] = "parquet",
 ) -> None:
     """
     Main function to write reference images from a dataset to Parquet files,
@@ -94,21 +97,26 @@ def write_reference_images(
     :param dataset: PyTorch dataset containing reference images.
     :param metadata: DataFrame containing metadata for the reference images.
     """
-    SHARD_SIZE = 128  # Fixed shard size for writing reference images to parquet files
 
     if not path.exists():
         raise ValueError(f"Provided path does not exist: {path}")
 
-    if len(metadata) != len(dataset):
+    if len(metadata) > len(dataset):
         raise ValueError(
             f"Length mismatch: metadata has {len(metadata)} items, "
             f"dataset has {len(dataset)} items."
         )
 
-    write_path = path / PARQUET_WRITE_ROOT
+    if backend == "parquet":
+        write_path = path / PARQUET_WRITE_ROOT
+    else:
+        write_path = path
+
     write_path.mkdir(parents=True, exist_ok=True)
 
-    with Writer(
+    _Writer = LanceWriter if backend == "lance" else Writer
+
+    with _Writer(
         output_dir=write_path,
         schema=_image_record_schema(metadata),
         overwrite=False,
@@ -117,7 +125,7 @@ def write_reference_images(
         progress = tqdm(
             enumerate(metadata.to_dict(orient="records")),
             total=len(metadata),
-            desc="Writing reference images to parquet",
+            desc=f"Writing reference images to {backend}",
         )
 
         for i, row in progress:

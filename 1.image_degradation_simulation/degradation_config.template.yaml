@@ -7,3 +7,5 @@ path_col_prefix: "PathName_"
 file_col_prefix: "FileName_"
 # original analysis data root path, shouldn't change since the loaddata are downloaded from a pinned commit
 source_path_prefix: "/media/18tbdrive" 
+simulation_subsample_n: 50 # max number of crops to sample per well/plate combination for metric evaluation
+simulation_subsample_seed: 42
