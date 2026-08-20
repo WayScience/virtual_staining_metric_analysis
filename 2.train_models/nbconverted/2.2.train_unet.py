@@ -242,12 +242,6 @@ for split, _loaddata_df in zip(
     dataset.input_channel_keys = [INPUT_CHANNEL]
     dataset.target_channel_keys = [TARGET_CHANNEL]
 
-    crop_specs = generate_point_centered_crops(
-        dataset=dataset,
-        crop_size=256,
-        mapping=pt_mapping
-    )
-
     crop_dataset = CropImageDataset.from_base_dataset(
         base_dataset=dataset,
         transforms=MaxScaleNormalize(
