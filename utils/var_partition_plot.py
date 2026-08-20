@@ -41,6 +41,8 @@ def plot_anova_variance_partition(
     output_path: Path | str | None = None,
     dpi: int = 300,
     show: bool = True,
+    legend_adjust: float = 0.15,
+    hatch_legend_adjust: float = 0.15,
 ) -> tuple[Figure, Axes, pd.DataFrame]:
     """Plot stacked ANOVA variance partitions from canonical term names."""
     row_cols = tuple(row_cols)
@@ -86,6 +88,13 @@ def plot_anova_variance_partition(
 
     if plot_wide.empty:
         raise ValueError("The ANOVA table produced no plottable groups.")
+
+    # Normalize the index so downstream logic always sees tuples.
+    if not isinstance(plot_wide.index, pd.MultiIndex):
+        plot_wide.index = pd.MultiIndex.from_arrays(
+            [plot_wide.index],
+            names=row_cols,
+        )
 
     # Order rows.
     row_index = plot_wide.index.to_frame(index=False)
@@ -227,7 +236,7 @@ def plot_anova_variance_partition(
             handles=hatch_handles,
             title="Shading",
             loc="upper center",
-            bbox_to_anchor=(0.5, -0.17),
+            bbox_to_anchor=(0.5, -hatch_legend_adjust),
             ncol=min(3, len(hatch_handles)),
             frameon=False,
         )
@@ -237,7 +246,7 @@ def plot_anova_variance_partition(
     ax.spines["right"].set_visible(False)
 
     fig.tight_layout()
-    fig.subplots_adjust(bottom=0.24 if hatch_handles else 0.15)
+    fig.subplots_adjust(bottom=legend_adjust)
 
     if output_path is not None:
         output_path = Path(output_path)
