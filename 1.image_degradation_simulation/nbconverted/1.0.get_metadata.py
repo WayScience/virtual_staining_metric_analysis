@@ -23,7 +23,8 @@ metadata_download_path = Path("metadata")
 metadata_download_path.mkdir(parents=True, exist_ok=True)
 
 
-# This analysis is limited to the first two plates (24hour time point) of batch 1.
+# The degradation simulation analysis is limited to the first two plates (24hour time point) of batch 1.
+# Model training will use all of batch 1, so downloading them all at once.
 
 # In[3]:
 
@@ -42,8 +43,12 @@ platemaps = [
 
 # Save these files under metadata/loaddatas/.
 loaddatas = [
-    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143976_concatenated.csv",
-    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143977_concatenated.csv",
+    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143976_concatenated.csv", # 24 hrs
+    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143977_concatenated.csv", # 24 hrs
+    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143978_concatenated.csv", # 48 hrs
+    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143979_concatenated.csv", # 48 hrs
+    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143980_concatenated.csv", # 72 hrs
+    "1.illumination_correction/loaddata_csvs/Round_1_data/BR00143981_concatenated.csv", # 72 hrs
 ]
 
 
@@ -69,4 +74,3 @@ for destination_dir, source_paths in csv_downloads.items():
     )
 
 print(f"Downloaded {len(downloaded_files)} CSV files.")
-

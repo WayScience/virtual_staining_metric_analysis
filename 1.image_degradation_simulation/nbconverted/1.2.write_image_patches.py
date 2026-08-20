@@ -64,7 +64,9 @@ output_dir.mkdir(parents=True, exist_ok=True)
 
 
 dataset = ds.dataset(loaddata_files, format="parquet")
-table = dataset.to_table()
+table = dataset.to_table(
+    filter=ds.field("Metadata_Plate").isin(["BR00143976", "BR00143977"])
+)
 loaddata_df = table.to_pandas()
 loaddata_df.head()
 
