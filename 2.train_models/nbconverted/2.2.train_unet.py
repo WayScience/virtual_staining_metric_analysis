@@ -134,7 +134,7 @@ else:
     TRAIN_EXEC_DIR = Path.cwd().resolve()
 
 DATASPLIT_DIR = TRAIN_EXEC_DIR / "data_split_output"
-if not DATASPLIT_DIR.exists() and not DATASPLIT_DIR.is_dir():
+if not DATASPLIT_DIR.exists() or not DATASPLIT_DIR.is_dir():
     raise ValueError(f"Data split output directory {DATASPLIT_DIR} does not exist.")
 
 LOADDATA_FILE_PATH = DATASPLIT_DIR / "loaddata_train.parquet"
