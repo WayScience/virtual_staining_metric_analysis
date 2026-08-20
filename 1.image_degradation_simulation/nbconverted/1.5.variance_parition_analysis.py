@@ -1,6 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
+# # 1.5.Perform variance partitioning analysis (ANOVA) on metric values against degradation and biology
+# This notebook:
+# 1. Reads in metric evaluation records generated and written in 1.4.
+# 2. Merges metric evaluation records with platemap to obtain human readable metadata regarding biology.
+# 3. Performs ANOVA analysis per metric and degradation combination (over record fragment)
+# 4. Collects ANOVA results summary for all metric and degradation combinations and write as output.
+
 # In[1]:
 
 
@@ -15,8 +22,9 @@ from utils.validate_config import (
 )
 from utils.iter_data import iter_metric_transform_frames
 from utils.metric_anova import fit_anova, AnovaSpec
-from utils.var_partition_plot import plot_anova_variance_partition
 
+
+# ## Pathing
 
 # In[2]:
 
@@ -52,6 +60,8 @@ plot_dir = output_dir / "plots"
 plot_dir.mkdir(parents=True, exist_ok=True)
 
 
+# ## Wrangle metadata so later merge can happen smoothly
+
 # In[3]:
 
 
@@ -66,6 +76,10 @@ barcode_platemap_df = pd.merge(
     barcode_df, platemap_df, on='platemap_file', how='inner'
 ).rename(columns={'well': 'Metadata_Well'})
 
+
+# ## ANOVA
+
+# Define ANOVA configuration
 
 # In[4]:
 
@@ -94,10 +108,19 @@ ANOVA_SPEC: AnovaSpec = {
 }
 
 
+# Iterate over metric-degradation combinations, merge fragment record with metadata and perform ANOVA
+
 # In[5]:
 
 
 variance_results: list[pd.DataFrame] = []
+# because certain tranforms (e.g. random_gamma) can result in
+# infinity or NaN metric values in combination with certain metrics
+# (e.g. PSNR when MSE is too small, foreground variants of PSNR and SSIM when
+# the foreground mask is too small or empty), 
+# we allow a small proportion of invalid values to be ignored.
+# The 20% is a somewhat arbitrary threshold, but it is intended to be permissive enough to 
+# allow for the expected invalid values while still being strict enough to catch unexpected issues.
 max_invalid_prop = 0.2
 
 for subdir, transform_name, df in iter_metric_transform_frames(
@@ -145,6 +168,13 @@ for subdir, transform_name, df in iter_metric_transform_frames(
         )
         continue
 
+    print(
+        f"After filtering invalid values, "
+        f"metric={metric_name}, "
+        f"transform={transform_name}, "
+        f"rows={len(df):,}"
+    )
+
     df_enrich = df.merge(
         barcode_platemap_df,
         on=["Metadata_Plate", "Metadata_Well"],
@@ -172,6 +202,8 @@ for subdir, transform_name, df in iter_metric_transform_frames(
     if anova_result is not None:
         variance_results.append(anova_result)
 
+
+# Write output
 
 # In[6]:
 
@@ -203,99 +235,3 @@ variance_partition_df.to_parquet(
 )
 
 variance_partition_df.head()
-
-
-# In[7]:
-
-
-TERM_COLORS = {
-    "parameter_value": "#E69F00",
-    "cell_line": "#0072B2",
-    "seeding_density": "#009E73",
-    "channel": "#6A3D9A",
-    "cell_line:seeding_density": "#8DA0CB",
-    "cell_line:channel": "#66C2A5",
-    "seeding_density:channel": "#B2ABD2",
-    "parameter_value:cell_line": "#D55E00",
-    "parameter_value:seeding_density": "#CC79A7",
-    "parameter_value:channel": "#A6761D",
-    "Residual": "#9E9E9E",
-}
-
-TERM_ORDER = [
-    "parameter_value",
-    "cell_line",
-    "seeding_density",
-    "channel",
-    "cell_line:seeding_density",
-    "cell_line:channel",
-    "seeding_density:channel",
-    "parameter_value:seeding_density",
-    "parameter_value:cell_line",
-    "parameter_value:channel",
-    "Residual",
-]
-
-HATCH_GROUPS = {
-    "Univariate known": (
-        {
-            "cell_line",
-            "seeding_density",
-            "channel",
-        },
-        "//",
-    ),
-    "Interaction terms": (
-        {
-            "cell_line:seeding_density",
-            "cell_line:channel",
-            "seeding_density:channel",
-            "parameter_value:seeding_density",
-            "parameter_value:cell_line",
-            "parameter_value:channel",
-        },
-        "..",
-    ),
-}
-
-METRIC_ORDER = [
-    "dists",
-    "lpips",
-    "foreground_ssim",
-    "ssim",
-    "foreground_psnr",
-    "psnr",
-    "mae",
-]
-
-
-METRIC_LABELS = {
-    "dists": "DISTS",
-    "lpips": "LPIPS",
-    "foreground_ssim": "Foreground SSIM",
-    "ssim": "SSIM",
-    "foreground_psnr": "Foreground PSNR",
-    "psnr": "PSNR",
-    "mae": "MAE",
-}
-
-fig, ax, plot_wide = plot_anova_variance_partition(
-    variance_partition_df,
-    row_cols=(
-        "metric_name",
-        "transform_name",
-    ),
-    value_col="eta2",
-    term_order=TERM_ORDER,
-    term_colors=TERM_COLORS,
-    hatch_groups=HATCH_GROUPS,
-    row_orders={
-        "metric_name": METRIC_ORDER,
-    },
-    row_value_labels={
-        "metric_name": METRIC_LABELS,
-    },
-    output_path=plot_dir / "anova.png",
-    figsize_width=12,
-    row_height=0.34,
-)
