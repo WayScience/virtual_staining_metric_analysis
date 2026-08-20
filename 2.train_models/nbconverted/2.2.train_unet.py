@@ -54,7 +54,11 @@ ON_HPC = require_bool_env("ON_HPC", default=False)
 # only needed if ON_HPC
 EXPT_NAME = "pediatric_cancer_virtual_stain_training"
 SCRATCH_DIR = Path(os.environ.get("SCRATCH", Path.home()))
-TRAIN_ROOT = SCRATCH_DIR # or orverride with a different path if needed
+TRAIN_ROOT = Path(os.environ.get(
+    "TRAIN_ROOT", 
+    '/scratch/alpine/wli19@xsede.org/' if ON_HPC else SCRATCH_DIR / "train_models"
+))
+TRAIN_ROOT.mkdir(parents=True, exist_ok=True)
 
 # only needed if not ON_HPC
 LOCAL_MLFLOW_SERVER = "http://127.0.0.1:5000"
@@ -121,7 +125,15 @@ _ = generator.manual_seed(SEED)
 # In[4]:
 
 
-DATASPLIT_DIR = Path(".") / "data_split_output"
+# path resolve for script vs notebook execution
+if "__file__" in globals():
+    # 2.train_models/nbconverted/2.2.train_unet.py
+    TRAIN_EXEC_DIR = Path(__file__).resolve().parents[1]
+else:
+    # Notebook kernel starts in 2.train_models/
+    TRAIN_EXEC_DIR = Path.cwd().resolve()
+
+DATASPLIT_DIR = TRAIN_EXEC_DIR / "data_split_output"
 if not DATASPLIT_DIR.exists() and not DATASPLIT_DIR.is_dir():
     raise ValueError(f"Data split output directory {DATASPLIT_DIR} does not exist.")
 
@@ -166,10 +178,6 @@ if ON_HPC:
     # directory on scratch space so trainings can be centrally logged and tracked
 
     EXPT_NAME = "pediatric_cancer_virtual_stain_training"
-
-    TRAIN_ROOT = Path(
-        '/scratch/alpine/wli19@xsede.org/'
-    )
 
     TRAIN_ROOT.resolve(strict=False)
     TRAIN_ROOT.mkdir(parents=True, exist_ok=True)
