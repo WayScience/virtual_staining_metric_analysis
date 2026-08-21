@@ -1,3 +1,9 @@
+"""
+Nested regression utilities for bootstrapping and summarizing effect sizes
+    of one restricted term and one additional full term at a time with linear
+    regression.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -17,16 +23,18 @@ logger = logging.getLogger(__name__)
 class BootstrapConfig:
     """Configuration for bootstrap nested regression."""
 
-    n_boot: int = 300
-    sample_frac: float = 1.0
-    replace: bool = True
-    standardize: bool = False
+    n_boot: int = 300  # how many bootstrap repeats
+    sample_frac: float = 0.5  # fraction of group rows to sample for each bootstrap
+    replace: bool = True  # whether to sample with replacement, usually True for bootstrap
+    standardize: bool = True  # whether to standardize x1 and x2 columns before fitting
     random_state: int | None = 42
     use_tqdm: bool = True
     drop_na: bool = True
-    min_group_size: int = 25
+    min_group_size: int = 25  # minimum number of rows in a group to perform bootstrap
     max_per_group: int | None = None
-    robust_cov: str | None = None
+    robust_cov: str | None = (
+        None  # covariance type for robust standard errors, e.g., "HC3" or "HC0"
+    )
 
 
 @dataclass
@@ -59,7 +67,17 @@ def _fit_ols_formula(
     df: pd.DataFrame,
     formula: str,
     robust_cov: str | None = None,
-):
+) -> smf.RegressionResultsWrapper:
+    """
+    Helper function to fit an OLS model using a formula
+        and optionally compute robust covariance estimates.
+
+    :param df: DataFrame containing the data for regression.
+    :param formula: A string representing the regression formula.
+    :param robust_cov: Optional string specifying the type of robust covariance
+        to compute (e.g., "HC3", "HC0"). If None, standard covariance is used.
+    :return: A fitted OLS regression results object.
+    """
     model = smf.ols(formula, data=df)
     res = model.fit()
     if robust_cov:
@@ -68,11 +86,21 @@ def _fit_ols_formula(
 
 
 def _compute_effect_sizes(res_re, res_fu) -> dict[str, float]:
+    """
+    Compute effect sizes and R-squared statistics from restricted and
+        full regression results.
+    """
+
+    # R-squared values
     r2_re = float(getattr(res_re, "rsquared", np.nan))
     r2_fu = float(getattr(res_fu, "rsquared", np.nan))
+
+    # sum of squares
     ssr_re = float(getattr(res_re, "ssr", np.nan))
     ssr_fu = float(getattr(res_fu, "ssr", np.nan))
 
+    # delta R-squared, measures the increase in explained variance when
+    # adding x2 to the model
     delta_r2 = r2_fu - r2_re if np.isfinite(r2_re) and np.isfinite(r2_fu) else np.nan
 
     if np.isfinite(r2_re) and np.isfinite(r2_fu) and (1 - r2_re) > 0:
@@ -100,6 +128,13 @@ def _prepare_bootstrap_frame(
     boot: pd.DataFrame,
     colspec: ColumnSpec,
 ) -> pd.DataFrame:
+    """
+    Prepare the bootstrap DataFrame for regression by converting x2 to ordinal
+    if specified in the ColumnSpec.
+    This function modifies the DataFrame in place and returns it.
+    If x2 is not ordinal or is numeric, the DataFrame is returned unchanged.
+    If x2 is non-numeric and ordinal_order is not provided, a ValueError is raised.
+    """
     if not colspec.x2_ordinal:
         return boot
 
@@ -125,6 +160,17 @@ def _one_bootstrap(
     colspec: ColumnSpec,
     rng: np.random.Generator,
 ) -> dict[str, Any]:
+    """
+    Perform one bootstrap iteration for a single group of data, fitting both
+    the restricted and full regression models, and computing effect sizes.
+
+    :param df_group: DataFrame containing the data for a single group.
+    :param cfg: BootstrapConfig object with configuration parameters.
+    :param colspec: ColumnSpec object specifying the columns for regression.
+    :param rng: NumPy random number generator for reproducibility.
+    :return: A dictionary containing regression coefficients, effect sizes, and
+        the number of rows used in the bootstrap sample.
+    """
     n_group = len(df_group)
     bsize = max(2, round(cfg.sample_frac * n_group)) if cfg.sample_frac else n_group
     idx = rng.choice(df_group.index.to_numpy(), size=bsize, replace=cfg.replace)
@@ -167,7 +213,15 @@ def bootstrap_nested_regression(
     *,
     rng: np.random.Generator | None = None,
 ) -> pd.DataFrame:
-    """Run grouped bootstrap nested regression for one x1 + one x2 specification."""
+    """
+    Run grouped bootstrap nested regression for one x1 + one x2 specification.
+
+    :param df: Input DataFrame containing the data.
+    :param colspec: ColumnSpec object specifying the columns for regression.
+    :param cfg: BootstrapConfig object with configuration parameters.
+    :param rng: NumPy random number generator for reproducibility.
+    :return: DataFrame containing bootstrap results for all groups and iterations.
+    """
     if cfg is None:
         cfg = BootstrapConfig()
 
@@ -254,6 +308,20 @@ def summarize_r2_scatter_bootstrap(
     partial_col: str = "partial_r2_x2",
     ci: float = 0.95,
 ) -> pd.DataFrame:
+    """
+    Summarize bootstrap results for restricted and partial R-squared values.
+    Takes the concatenated bootstrap DataFrame of multiple single-group
+        bootstrap results and computes the mean and (empirical) confidence
+        intervals for restricted and partial R-squared values for each group.
+
+    :param boot_df: DataFrame containing bootstrap results with required columns.
+    :param output_file: Optional path to save the summary DataFrame as a Parquet file.
+    :param group_cols: Tuple of column names to group by for summarization.
+    :param restricted_col: Column name for restricted R-squared values.
+    :param partial_col: Column name for partial R-squared values.
+    :param ci: Confidence interval level (between 0 and 1) for quantile calculations.
+    :return: DataFrame containing summarized R-squared statistics for each group.
+    """
 
     required = set(group_cols) | {"boot_idx", restricted_col, partial_col}
     missing = sorted(required - set(boot_df.columns))
