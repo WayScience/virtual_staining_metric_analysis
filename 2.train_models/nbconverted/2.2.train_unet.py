@@ -57,16 +57,17 @@ from virtual_stain_flow.vsf_logging.callbacks.PlotCallback import PlotPrediction
 
 # ## Training hyper-parameters
 
-# In[2]:
+# In[ ]:
 
 
 ON_HPC = require_bool_env("ON_HPC", default=False)
+SUBSET_TRAINING = require_bool_env("SUBSET_TRAINING", default=True)
 
 # only needed if ON_HPC
 EXPT_NAME = "pediatric_cancer_virtual_stain_training"
 SCRATCH_DIR = Path(os.environ.get("SCRATCH", Path.home()))
 TRAIN_ROOT = Path(os.environ.get(
-    "TRAIN_ROOT", 
+    "TRAIN_ROOT",
     '/scratch/alpine/wli19@xsede.org/' if ON_HPC else SCRATCH_DIR / "train_models"
 ))
 TRAIN_ROOT.mkdir(parents=True, exist_ok=True)
@@ -82,34 +83,34 @@ ARCHITECTURE = require_choice_env(
     default="UNet",
 )
 
-# default values used in notebook, in script mode env variables are required.
+# Default values are used in the notebook; script execution can override them with environment variables.
 INPUT_CHANNEL = require_env("INPUT_CHANNEL", default="OrigBrightfield")
 TARGET_CHANNEL = require_env("TARGET_CHANNEL", default="OrigDNA")
 CONFLUENCE = require_positive_int_env("CONFLUENCE", default=1000)
 
-# smallest patch dataset size is around 2900
-# ensure that all train conditions have the same number of training samples
-SUBSET_N = 2_900 if ON_HPC else 300 # for local testing
-
-# more than what would take for the model to converge, optimal model
-# will be determined at the end by best validation loss
-EPOCHS = 300 if ON_HPC else 30 # for local testing 
-
-# literature selection, also pretty typical values for virtual stainign training
-BATCH_SIZE = 32 if ON_HPC else 4
+# Subset mode provides a short local smoke test. Full mode uses the balanced production sample count.
+SUBSET_N = 300 if SUBSET_TRAINING else 2_900
+EPOCHS = 30 if SUBSET_TRAINING else 300
+BATCH_SIZE = 4 if SUBSET_TRAINING else 32
 LR = 2e-4
+TRAINING_MODE = "subset" if SUBSET_TRAINING else "full"
 
 print(
     "Experiment configuration:\n"
+    f"  ARCHITECTURE={ARCHITECTURE}\n"
+    f"  TRAINING_MODE={TRAINING_MODE}\n"
     f"  INPUT_CHANNEL={INPUT_CHANNEL}\n"
     f"  TARGET_CHANNEL={TARGET_CHANNEL}\n"
-    f"  CONFLUENCE={CONFLUENCE}",
-    f"  SUBSET_N={SUBSET_N}",
+    f"  CONFLUENCE={CONFLUENCE}\n"
+    f"  SUBSET_N={SUBSET_N}\n"
+    f"  EPOCHS={EPOCHS}\n"
+    f"  BATCH_SIZE={BATCH_SIZE}",
     flush=True,
 )
 
 LOGGING_TAGS = {
-    'run_name': f"Production_{ARCHITECTURE}_{TARGET_CHANNEL}_{CONFLUENCE}_{EPOCHS}",
+    'run_name': f"{TRAINING_MODE}_{ARCHITECTURE}_{TARGET_CHANNEL}_{CONFLUENCE}_{EPOCHS}",
+    'training_mode': TRAINING_MODE,
     'epochs': EPOCHS,
     'confluence': CONFLUENCE,
     'channel': TARGET_CHANNEL,

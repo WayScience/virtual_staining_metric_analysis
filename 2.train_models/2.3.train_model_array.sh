@@ -49,6 +49,7 @@ esac
 
 INPUT_CHANNEL="OrigBrightfield"
 ON_HPC=True
+SUBSET_TRAINING=False
 
 TARGET_CHANNELS=(
     "OrigDNA"
@@ -86,6 +87,7 @@ echo "ARRAY_TASK_ID:   ${SLURM_ARRAY_TASK_ID}"
 echo "HOST:            $(hostname)"
 echo
 echo "ARCHITECTURE:    ${ARCHITECTURE}"
+echo "SUBSET_TRAINING: ${SUBSET_TRAINING}"
 echo "INPUT_CHANNEL:   ${INPUT_CHANNEL}"
 echo "TARGET_CHANNEL:  ${TARGET_CHANNEL}"
 echo "CONFLUENCE:      ${CONFLUENCE}"
@@ -97,6 +99,7 @@ echo "============================================================"
 # ---------------------------------------------------------------------------
 
 ON_HPC="$ON_HPC" \
+SUBSET_TRAINING="$SUBSET_TRAINING" \
 ARCHITECTURE="$ARCHITECTURE" \
 INPUT_CHANNEL="$INPUT_CHANNEL" \
 TARGET_CHANNEL="$TARGET_CHANNEL" \
