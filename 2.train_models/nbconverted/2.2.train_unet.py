@@ -1,14 +1,13 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # Train 1 UNet model on train condition (confluence) and predicting specific target channels.
-# Parametrized notebook/script to train under environment variable configured input, target and confluence settings.
+# # Train 1 UNet/UNeXt/wGAN model on train condition (confluence) and predicting specific target channels.
+# Parametrized notebook/script to train under environment variable configured architecture, input, target and confluence settings.
 # 
 # One run of notebook/script will only train model for one target, confluence combiantion. 
-# The notebook is largely for demo purpose on smaller train epoch and batch size setting.
-# Please use  
+# The notebook is largely for demo purpose on smaller train epoch and batch size setting, and defaults to UNet
 
-# In[1]:
+# In[4]:
 
 
 from pathlib import Path
@@ -27,6 +26,8 @@ from utils.train_utils import (
     require_positive_int_env,
     require_bool_env, 
     build_dataset_inputs,
+    require_choice_env,
+    ARCHITECTURES
 )
 
 ## Data
@@ -37,7 +38,17 @@ from virtual_stain_flow.datasets.ds_engine.crop_generator import generate_point_
 
 ## Model & Trainer
 from virtual_stain_flow.models.unet import UNet
+from virtual_stain_flow.models.unext import ConvNeXtUNet
 from virtual_stain_flow.trainers.logging_trainer import SingleGeneratorTrainer
+from virtual_stain_flow.models.discriminator import PatchBasedDiscriminator
+from virtual_stain_flow.trainers.logging_gan_trainer import LoggingWGANTrainer
+
+## Special losses
+from virtual_stain_flow.losses.wgan_losses import (
+    AdversarialLoss,
+    GradientPenaltyLoss,
+    WassersteinLoss
+)
 
 ## Logging
 from virtual_stain_flow.vsf_logging.MlflowLogger import MlflowLogger
@@ -63,8 +74,13 @@ TRAIN_ROOT.mkdir(parents=True, exist_ok=True)
 # only needed if not ON_HPC
 LOCAL_MLFLOW_SERVER = "http://127.0.0.1:5000"
 
-
 SEED = 42
+
+ARCHITECTURE = require_choice_env(
+    "ARCHITECTURE",
+    ARCHITECTURES,
+    default="UNet",
+)
 
 # default values used in notebook, in script mode env variables are required.
 INPUT_CHANNEL = require_env("INPUT_CHANNEL", default="OrigBrightfield")
@@ -80,7 +96,7 @@ SUBSET_N = 2_900 if ON_HPC else 300 # for local testing
 EPOCHS = 300 if ON_HPC else 30 # for local testing 
 
 # literature selection, also pretty typical values for virtual stainign training
-BATCH_SIZE = 32 if ON_HPC else 8
+BATCH_SIZE = 32 if ON_HPC else 4
 LR = 2e-4
 
 print(
@@ -93,10 +109,11 @@ print(
 )
 
 LOGGING_TAGS = {
-    'run_name': f"Production_UNet_{TARGET_CHANNEL}_{CONFLUENCE}_{EPOCHS}",
+    'run_name': f"Production_{ARCHITECTURE}_{TARGET_CHANNEL}_{CONFLUENCE}_{EPOCHS}",
     'epochs': EPOCHS,
     'confluence': CONFLUENCE,
     'channel': TARGET_CHANNEL,
+    'architecture': ARCHITECTURE,
     'batch_size': BATCH_SIZE,
     'lr': LR,
 }
@@ -262,9 +279,9 @@ for split, _loaddata_df in zip(
     print(f"Dataset for split '{split}' has {len(datasets[split])} samples, subset has {len(datasets_sub[split])} samples.")
 
 
-# ## Configure trainer and logger
+# ## Configure model and trainer
 
-# In[7]:
+# In[ ]:
 
 
 # Batch with DataLoader
@@ -272,25 +289,148 @@ for split, _loaddata_df in zip(
 train_loader = DataLoader(datasets_sub['train'], batch_size=BATCH_SIZE, shuffle=True, generator=generator, num_workers=0,)
 val_loader = DataLoader(datasets_sub['val'], batch_size=BATCH_SIZE, shuffle=False, num_workers=0,)
 
+## Generator losses shared across architectures
+generator_losses = [ # Training with 2 losses: L1 and MS-SSIM
+    torch.nn.L1Loss(), # simple per pixel error
+    MultiScaleStructuralSimilarityIndexMeasure( # helps models converge much faster
+        data_range=None, # use per batch empirical data range
+        kernel_size=11, # standard MS-SSIM kernel size, just being explicit
+        sigma=1.5, # standard MS-SSIM sigma, just being explicit
+    )
+]
+generator_loss_weights = [1.0, -1.0] # minimize L1 distance (lower is better) and maximize MS-SSIM (higher is better)
+
 # construct model and optimizer, with reproducible initialization
 cuda_devices = list(range(torch.cuda.device_count()))
 with torch.random.fork_rng(devices=cuda_devices):
     torch.manual_seed(SEED + 1)
-    # Model & Optimizer
-    model = UNet(
-        in_channels=1,
-        out_channels=1,
-        depth=4,
-        encoder_down_block='conv',
-        decoder_up_block='convt',
-        act_type='sigmoid'
-    )
-    optimizer = torch.optim.AdamW(
-        model.parameters(),     
-        lr=LR,
-        betas=(0.9, 0.999),
-        weight_decay=1e-5,
-    )
+
+    match ARCHITECTURE:
+        case "UNet":
+            model = UNet(
+                in_channels=1,
+                out_channels=1,
+                depth=4,
+                encoder_down_block='conv',
+                decoder_up_block='convt',
+                act_type='sigmoid'
+            )
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=LR,
+                betas=(0.9, 0.999),
+                weight_decay=1e-5,
+            )
+
+            # Initialize Trainer and start training
+            trainer = SingleGeneratorTrainer(
+                model=model,
+                optimizer=optimizer,
+                losses=generator_losses,
+                loss_weights=generator_loss_weights,
+                device=device,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=None,
+            )
+
+        case "wGAN":
+            model = UNet(
+                in_channels=1,
+                out_channels=1,
+                depth=4,
+                encoder_down_block='conv',
+                decoder_up_block='convt',
+                act_type='sigmoid'
+            ).to(device=device,dtype=torch.float32)
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=LR,
+                betas=(0.9, 0.999),
+                weight_decay=1e-5,
+                foreach=False,
+                fused=False,
+            )
+            discriminator = PatchBasedDiscriminator(
+                in_channels=2, # real + fake
+                base_filters=64,
+                n_down_sample_layer = 3,
+                n_additional_layer = 1,
+                channel_multiplier = 2,
+                _leaky_relu_alpha = 0.2,
+                _batch_norm = True
+            ).to(device,dtype=torch.float32)
+            disc_optimizer = torch.optim.AdamW(
+                discriminator.parameters(),
+                lr=LR,
+                betas=(0., 0.999),
+                weight_decay=1e-5
+            )
+
+            trainer = LoggingWGANTrainer(
+                # Generator
+                generator=model,
+                generator_optimizer=optimizer,
+                generator_losses=generator_losses,
+                generator_loss_weights=generator_loss_weights,
+                # Generator Adverserial Loss
+                generator_adverserial_loss=AdversarialLoss(),
+                generator_adverserial_loss_weight=0.1,
+                # Discriminator wasserstein Loss and Gradient Penalty
+                # weights are set to 1.0 and 10.0 respectively, as per the original WGAN-GP paper
+                discriminator=discriminator,
+                discriminator_optimizer=disc_optimizer,
+                discriminator_loss=WassersteinLoss(),
+                discriminator_loss_weight=1.0,
+                discriminator_gradient_penalty_loss=GradientPenaltyLoss(),
+                discriminator_gradient_penalty_weight=10.0,
+                # Training alternation
+                n_discriminator_steps=3, # number of discriminator updates per generator update
+                # Other parameters
+                device=device,
+                train_loader=train_loader, # training data loader
+                val_loader=val_loader,  # validation data loader
+                test_loader=None, # for demo purposes, we don't supply a test set
+            )
+
+        case "UNeXt":
+            model = ConvNeXtUNet(
+                in_channels=1,
+                out_channels=1,
+                decoder_up_block='pixelshuffle',
+                decoder_compute_block='convnext',
+                act_type = 'sigmoid' # final normalization activation
+            ).to(device=device,dtype=torch.float32)
+            optimizer = torch.optim.AdamW(
+                model.parameters(),
+                lr=LR,
+                betas=(0.9, 0.999),
+                weight_decay=1e-5,
+                foreach=False,
+                fused=False,
+            )
+            # Initialize Trainer and start training
+            trainer = SingleGeneratorTrainer(
+                model=model,
+                optimizer=optimizer,
+                losses=generator_losses,
+                loss_weights=generator_loss_weights,
+                device=device,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                test_loader=None,
+            )
+
+        case _:
+            raise AssertionError(
+                f"Unhandled architecture: {ARCHITECTURE!r}"
+            )
+
+
+# ## Configure logger
+
+# In[ ]:
+
 
 # Plotting callback to visualize predictions during training
 # At the end of every n epochs, the callback takes the most recent model
@@ -323,25 +463,6 @@ plot_callback_val = PlotPredictionCallback(
     wspace=0.025, # small spacing between subplots
     hspace=0.05, # small spacing between subplots
     tag="plot_heldout_predictions" # tag needed to plot train and val predictions separate
-)
-
-# Initialize Trainer and start training
-trainer = SingleGeneratorTrainer(
-    model=model,
-    optimizer=optimizer,
-    losses=[ # Training with 2 losses: L1 and MS-SSIM
-        torch.nn.L1Loss(), # simple per pixel error
-        MultiScaleStructuralSimilarityIndexMeasure( # helps models converge much faster
-            data_range=None, # use per batch empirical data range 
-            kernel_size=11, # standard MS-SSIM kernel size, just being explicit
-            sigma=1.5, # standard MS-SSIM sigma, just being explicit
-        )
-    ],
-    loss_weights=[1.0, -1.0], # minimize L1 distance (lower is better) and maximize MS-SSIM (higher is better)
-    device=device,
-    train_loader=train_loader,
-    val_loader=val_loader,
-    test_loader=None, # none for training, centralized eval separately keep train time under control
 )
 
 # MLflow Logger
