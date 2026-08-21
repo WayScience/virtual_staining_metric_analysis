@@ -1,8 +1,18 @@
 import os
 import sys
 from pathlib import Path
+from typing import Literal, TypeVar, cast
 
 import pandas as pd
+
+T = TypeVar("T", bound=str)
+Architecture = Literal["UNet", "wGAN", "UNeXt"]
+
+ARCHITECTURES: tuple[Architecture, ...] = (
+    "UNet",
+    "wGAN",
+    "UNeXt",
+)
 
 
 def _running_in_ipykernel() -> bool:
@@ -70,6 +80,23 @@ def require_bool_env(name: str, default: bool | None = None) -> bool:
         raise RuntimeError(
             f"Environment variable {name!r} must be a boolean (true/false), but received {raw_value!r}."
         )
+
+
+def require_choice_env(
+    name: str,
+    choices: tuple[T, ...],
+    default: T | None = None,
+) -> T:
+    """Return a required configuration value restricted to allowed choices."""
+    value = require_env(name, default=default)
+
+    if value not in choices:
+        allowed = ", ".join(repr(choice) for choice in choices)
+        raise RuntimeError(
+            f"Environment variable {name!r} must be one of [{allowed}], but received {value!r}."
+        )
+
+    return cast(T, value)
 
 
 def _merge_path_filename(

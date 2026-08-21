@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 
-#SBATCH --job-name=unet_train
+# Submit one architecture at a time, for example:
+# sbatch 2.3.train_model_array.sh UNet
+# sbatch 2.3.train_model_array.sh wGAN
+# sbatch 2.3.train_model_array.sh UNeXt
+
+#SBATCH --job-name=model_train
 #SBATCH --array=0-24%5
 
 # change to appropriate partition and qos for your cluster
@@ -33,8 +38,18 @@ cd /path/to/project/2.train_models/nbconverted
 # Parameter grid
 # ---------------------------------------------------------------------------
 
+ARCHITECTURE="${1:-UNet}"
+case "$ARCHITECTURE" in
+    UNet|wGAN|UNeXt) ;;
+    *)
+        echo "Unsupported architecture: ${ARCHITECTURE}. Expected UNet, wGAN, or UNeXt." >&2
+        exit 2
+        ;;
+esac
+
 INPUT_CHANNEL="OrigBrightfield"
 ON_HPC=True
+SUBSET_TRAINING=False
 
 TARGET_CHANNELS=(
     "OrigDNA"
@@ -71,6 +86,8 @@ echo "ARRAY_JOB_ID:    ${SLURM_ARRAY_JOB_ID}"
 echo "ARRAY_TASK_ID:   ${SLURM_ARRAY_TASK_ID}"
 echo "HOST:            $(hostname)"
 echo
+echo "ARCHITECTURE:    ${ARCHITECTURE}"
+echo "SUBSET_TRAINING: ${SUBSET_TRAINING}"
 echo "INPUT_CHANNEL:   ${INPUT_CHANNEL}"
 echo "TARGET_CHANNEL:  ${TARGET_CHANNEL}"
 echo "CONFLUENCE:      ${CONFLUENCE}"
@@ -82,6 +99,8 @@ echo "============================================================"
 # ---------------------------------------------------------------------------
 
 ON_HPC="$ON_HPC" \
+SUBSET_TRAINING="$SUBSET_TRAINING" \
+ARCHITECTURE="$ARCHITECTURE" \
 INPUT_CHANNEL="$INPUT_CHANNEL" \
 TARGET_CHANNEL="$TARGET_CHANNEL" \
 CONFLUENCE="$CONFLUENCE" \
