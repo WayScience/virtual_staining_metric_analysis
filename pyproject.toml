@@ -25,6 +25,7 @@ dependencies = [
     "torchmetrics",
     "lightning",
     "polars",
+    "kornia",
     "virtual_stain_flow @ git+https://github.com/WayScience/virtual_stain_flow.git@fe07aefaabc0c9553d9a64d05f21d65654704478"
 ]
 [project.optional-dependencies]
