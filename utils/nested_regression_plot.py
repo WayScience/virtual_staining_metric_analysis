@@ -6,7 +6,6 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-from matplotlib.cm import ScalarMappable
 from matplotlib.colors import LinearSegmentedColormap, TwoSlopeNorm
 from matplotlib.lines import Line2D
 
@@ -131,11 +130,11 @@ def plot_nested_r2_multi(
             )
 
         ax.set_xlabel("")
-        ax.set_title(partial_term)
+        ax.set_title(partial_term, fontsize=13, fontweight="normal", loc="left")
         ax.grid(True, axis="both", linestyle="--", linewidth=0.6, alpha=0.4)
         ax.set_axisbelow(True)
 
-    axes[0].set_ylabel(r"Partial $R^2$")
+    axes[0].set_ylabel(r"Partial $R^2$\n(Confounding)", fontsize=13)
 
     present_metrics = [
         metric for metric in (metric_order or []) if metric in set(plot_df["metric_name"])
@@ -164,7 +163,7 @@ def plot_nested_r2_multi(
             linestyle="none",
             markersize=marker_size,
             color="black",
-            label=(transform_labels or {}).get(transform, transform),
+            label=(transform_labels or {}).get(transform, transform).replace("\n", " "),
         )
         for transform, marker in (transform_markers or {}).items()
         if transform in present_transforms
@@ -202,7 +201,6 @@ def plot_burden_heatmaps(
     *,
     metric_order: Sequence[str] | None = None,
     metric_labels: Mapping[str, str] | None = None,
-    metric_label_colors: Mapping[str, str] | None = None,
     transform_labels: Mapping[str, str] | None = None,
     transform_order: Sequence[str] | None = None,
     eps: float = 1e-4,
@@ -237,8 +235,6 @@ def plot_burden_heatmaps(
         transform_order = list(burden_df["transform_name"].cat.categories)
     if metric_labels is None:
         metric_labels = {metric: metric for metric in metric_order}
-    if metric_label_colors is None:
-        metric_label_colors = {metric: "black" for metric in metric_order}
     if transform_labels is None:
         transform_labels = {transform: transform for transform in transform_order}
 
@@ -259,7 +255,7 @@ def plot_burden_heatmaps(
 
     n_panels = len(confounder_data)
     if figsize is None:
-        figsize = (4.1 * n_panels, 5.8)
+        figsize = (5 * n_panels, 5)
 
     fig, axes = plt.subplots(
         1,
@@ -297,12 +293,13 @@ def plot_burden_heatmaps(
         ax.set_xticks(np.arange(len(transform_order)))
         ax.set_xticklabels(
             [transform_labels[name] for name in transform_order],
+            fontsize=11,
             rotation=45,
             ha="right",
             rotation_mode="anchor",
         )
-        ax.set_xlabel("Degradation transform")
-        ax.set_title(confounder, fontsize=11, fontweight="bold", loc="left")
+        ax.set_xlabel("")
+        ax.set_title(confounder, fontsize=13, fontweight="normal", loc="left")
 
         if annotate:
             for row_i in range(values.shape[0]):
@@ -315,7 +312,7 @@ def plot_burden_heatmaps(
                             format(value, annotation_fmt),
                             ha="center",
                             va="center",
-                            fontsize=8,
+                            fontsize=11,
                             color="black",
                         )
 
@@ -323,22 +320,17 @@ def plot_burden_heatmaps(
             ax.set_yticks(np.arange(len(metric_order)))
             ax.set_yticklabels(
                 [metric_labels[m] for m in metric_order],
-                fontsize=9.5,
+                fontsize=11,
             )
             ax.yaxis.tick_right()
             ax.tick_params(axis="y", labelright=True, labelleft=False, right=False)
-            for tick_label, metric in zip(ax.get_yticklabels(), metric_order):
-                tick_label.set_color(metric_label_colors[metric])
         else:
             ax.tick_params(axis="y", labelleft=False, left=False)
 
-    scalar_mappable = ScalarMappable(norm=norm, cmap=burden_cmap)
-    scalar_mappable.set_array([])
-    cbar = fig.colorbar(scalar_mappable, ax=axes, shrink=0.75, pad=0.08)
-    cbar.set_label(r"partial $R^2$ / restricted $R^2$", fontsize=9)
+    fig.supxlabel("Degradation transform")
 
     if title is not None:
-        fig.suptitle(title, fontsize=12)
+        fig.suptitle(title, fontsize=13)
 
     if output_path is not None:
         plt.savefig(output_path, dpi=dpi, bbox_inches="tight")

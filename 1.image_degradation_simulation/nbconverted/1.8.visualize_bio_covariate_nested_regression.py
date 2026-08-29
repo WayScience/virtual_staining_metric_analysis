@@ -12,7 +12,6 @@
 
 from pathlib import Path
 
-import pandas as pd
 import matplotlib.pyplot as plt
 import pandas as pd
 
@@ -21,6 +20,7 @@ from utils.nested_regression_plot import (
     plot_nested_r2_multi,
     plot_burden_heatmaps,
 )
+from utils.validate_config import load_degradation_plot_config
 
 
 # ## Pathing
@@ -47,45 +47,13 @@ seeding_density_summary = pd.read_parquet(seeding_density_summary_file)
 # In[3]:
 
 
-METRIC_PALETTE = {
-    "dists": "#1F78B4",
-    "lpips": "#5E3C99",
-    "foreground_ssim": "#66C2A5",
-    "ssim": "#1B9E77",
-    "foreground_psnr": "#FDB863",
-    "psnr": "#E66101",
-    "mae": "#9E9E9E",
-}
+degradation_plot_config = load_degradation_plot_config("degradation_plot_config.yaml")
 
-METRIC_ORDER = [
-    "dists",
-    "lpips",
-    "foreground_ssim",
-    "ssim",
-    "foreground_psnr",
-    "psnr",
-    "mae",
-]
-
-METRIC_LABELS = {
-    "dists": "DISTS",
-    "lpips": "LPIPS",
-    "foreground_ssim": "Foreground SSIM",
-    "ssim": "SSIM",
-    "foreground_psnr": "Foreground PSNR",
-    "psnr": "PSNR",
-    "mae": "MAE",
-}
-
-METRIC_LABEL_COLORS = {
-    "dists": "#3B4CC0",
-    "lpips": "#3B4CC0",
-    "foreground_ssim": "#F1A340",
-    "ssim": "#F1A340",
-    "foreground_psnr": "#F1A340",
-    "psnr": "#F1A340",
-    "mae": "#7F7F7F",
-}
+METRIC_ORDER = degradation_plot_config["metrics"]["order"]
+METRIC_LABELS = degradation_plot_config["metrics"]["labels"]
+METRIC_PALETTE = degradation_plot_config["metrics"]["palette"]
+TRANSFORM_ORDER = degradation_plot_config["transforms"]["order"]
+TRANSFORM_LABELS = degradation_plot_config["transforms"]["labels"]
 
 ABLATION_MARKERS = {
     "dilate": "o",
@@ -95,38 +63,6 @@ ABLATION_MARKERS = {
     "grid_distortion": "*",
     "random_gamma": "P",
 }
-
-TRANSFORM_LABELS = {
-    "dilate": "Dilate",
-    "erode": "Erode",
-    "gaussian_blur": "GaussianBlur",
-    "gauss_noise": "GaussNoise",
-    "grid_distortion": "GridDistortion",
-    "random_gamma": "RandomGamma",
-}
-
-TRANSFORM_ORDER = [
-    "dilate",
-    "erode",
-    "gaussian_blur",
-    "gauss_noise",
-    "grid_distortion",
-    "random_gamma",
-]
-
-TRANSFORM_LABELS = {
-    "dilate": "Dilate",
-    "erode": "Erode",
-    "gaussian_blur": "Gaussian blur",
-    "gauss_noise": "Gaussian noise",
-    "grid_distortion": "Grid distortion",
-    "random_gamma": "Random gamma",
-}
-
-CONFOUNDER_ORDER = [
-    "Cell line",
-    "Seeding density / confluence",
-]
 
 
 # In[4]:
@@ -197,11 +133,11 @@ fig, axes, burden_df = plot_burden_heatmaps(
     },
     metric_labels=METRIC_LABELS,
     metric_order=METRIC_ORDER,
-    metric_label_colors=METRIC_PALETTE,
-    transform_labels=TRANSFORM_LABELS,
+    transform_labels={key: value.replace("\n", " ") for key, value in TRANSFORM_LABELS.items()},
     transform_order=TRANSFORM_ORDER,
     title=None,
     output_path=output_dir / "burden_heatmaps.png",
+    figsize=(10, 6.25),
     dpi=300,
     show=True
 )
