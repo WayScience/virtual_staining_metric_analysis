@@ -15,8 +15,12 @@ from pathlib import Path
 
 import pandas as pd
 
+from utils.validate_config import load_degradation_plot_config
 from utils.var_partition_plot import plot_anova_variance_partition
-from utils.var_partition_plot import plot_anova_radar
+from utils.var_partition_radar import (
+    plot_anova_radar,
+    plot_anova_radar_by_degradation,
+)
 
 
 # In[2]:
@@ -44,6 +48,14 @@ plot_dir.mkdir(parents=True, exist_ok=True)
 
 # In[3]:
 
+
+degradation_plot_config = load_degradation_plot_config("degradation_plot_config.yaml")
+
+METRIC_ORDER = degradation_plot_config["metrics"]["order"]
+METRIC_LABELS = degradation_plot_config["metrics"]["labels"]
+METRIC_PALETTE = degradation_plot_config["metrics"]["palette"]
+TRANSFORM_ORDER = degradation_plot_config["transforms"]["order"]
+TRANSFORM_LABELS = degradation_plot_config["transforms"]["labels"]
 
 TERM_COLORS = {
     "parameter_value": "#E69F00",
@@ -87,36 +99,6 @@ TERM_LABELS = {
     "Residual": "Residual",
 }
 
-METRIC_ORDER = [
-    "dists",
-    "lpips",
-    "foreground_ssim",
-    "ssim",
-    "foreground_psnr",
-    "psnr",
-    "mae",
-]
-
-METRIC_LABELS = {
-    "dists": "DISTS",
-    "lpips": "LPIPS",
-    "foreground_ssim": "Foreground SSIM",
-    "ssim": "SSIM",
-    "foreground_psnr": "Foreground PSNR",
-    "psnr": "PSNR",
-    "mae": "MAE",
-}
-
-
-TRANSFORM_LABELS = {
-    "dilate": "Dilate",
-    "erode": "Erode",
-    "gauss_noise": "Gaussian\nnoise",
-    "gaussian_blur": "Gaussian\nblur",
-    "grid_distortion": "Grid\ndistortion",
-    "random_gamma": "Gamma\ncorrection",
-}
-
 
 # In[4]:
 
@@ -143,6 +125,10 @@ HATCH_GROUPS = {
     ),
 }
 
+
+# In[5]:
+
+
 fig, ax, plot_wide = plot_anova_variance_partition(
     variance_partition_df,
     row_cols=(
@@ -156,19 +142,90 @@ fig, ax, plot_wide = plot_anova_variance_partition(
     hatch_groups=HATCH_GROUPS,
     row_orders={
         "metric_name": METRIC_ORDER,
+        "transform_name": TRANSFORM_ORDER,
     },
     row_value_labels={
-        "metric_name": METRIC_LABELS,
+        "metric_name": {
+            **METRIC_LABELS,
+            "foreground_ssim": "Foreground\nSSIM",
+            "foreground_psnr": "Foreground\nPSNR",
+        },
         "transform_name": {k: v.replace("\n", " ") for k, v in TRANSFORM_LABELS.items()},
     },
-    output_path=plot_dir / "anova.png",
-    figsize_width=12,
+    row_group_col="metric_name",
+    row_group_colors=METRIC_PALETTE,
+    row_group_label_x=-0.0125,
+    row_group_line_x=-0.005,
+    row_group_label_fontsize=13,
+    row_group_label_fontweight=None,
+    row_group_linewidth=5,
+    row_group_line_gap=0.05,
+    row_group_gap=0.18,
+    row_labels_side="inside",
+    row_label_x=0.95,
+    row_label_color="black",
+    row_label_fontsize=9,
+    row_label_outline_width=4,
+    show_y_axis=False,
+    xlabel_fontsize=13,
+    ylabel="",
+    output_path=plot_dir / "anova_metric_color.png",
+    figsize_width=10,
     row_height=0.34,
     show=True,
 )
 
 
-# In[5]:
+# In[6]:
+
+
+fig, ax, plot_wide = plot_anova_variance_partition(
+    variance_partition_df,
+    row_cols=(
+        "metric_name",
+        "transform_name",
+    ),
+    value_col="eta2",
+    term_labels=TERM_LABELS,
+    term_order=TERM_ORDER,
+    term_colors=TERM_COLORS,
+    hatch_groups=HATCH_GROUPS,
+    row_orders={
+        "metric_name": METRIC_ORDER,
+        "transform_name": TRANSFORM_ORDER,
+    },
+    row_value_labels={
+        "metric_name": {
+            **METRIC_LABELS,
+            "foreground_ssim": "Foreground\nSSIM",
+            "foreground_psnr": "Foreground\nPSNR",
+        },
+        "transform_name": {k: v.replace("\n", " ") for k, v in TRANSFORM_LABELS.items()},
+    },
+    row_group_col="metric_name",
+    row_group_colors={key: "#000000" for key in METRIC_PALETTE},
+    row_group_label_x=-0.0125,
+    row_group_line_x=-0.005,
+    row_group_label_fontsize=13,
+    row_group_linewidth=5,
+    row_group_line_gap=0.05,
+    row_group_gap=0.18,
+    row_labels_side="inside",
+    row_label_x=0.95,
+    row_label_color="black",
+    row_label_fontsize=9,
+    row_label_outline_width=4,
+    show_y_axis=False,
+    xlabel_fontsize=13,
+    ylabel="",
+    output_path=plot_dir / "anova.png",
+    figsize_width=10,
+    row_height=0.34,
+    show=True,
+)
+
+
+# In[7]:
 
 
 RADAR_COMPONENTS = {
@@ -216,14 +273,46 @@ RADAR_COMPONENTS = {
     },
 }
 
+RADAR_METRIC_LABELS = {
+    **METRIC_LABELS,
+    "foreground_ssim": "Foreground\nSSIM",
+    "foreground_psnr": "Foreground\nPSNR",
+}
+
 _ = plot_anova_radar(
     variance_partition_df,
     component_specs=RADAR_COMPONENTS,
     metric_order=METRIC_ORDER,
-    metric_labels=METRIC_LABELS,
-    transform_order=list(TRANSFORM_LABELS),
+    metric_labels=RADAR_METRIC_LABELS,
+    transform_order=TRANSFORM_ORDER,
     transform_labels=TRANSFORM_LABELS,
     output_path=plot_dir / "anova_radar.png",
     show=True,
-    legend_adjust=0.0
+)
+
+_ = plot_anova_radar_by_degradation(
+    variance_partition_df,
+    component_specs=RADAR_COMPONENTS,
+    metric_order=METRIC_ORDER,
+    metric_labels=RADAR_METRIC_LABELS,
+    transform_order=TRANSFORM_ORDER,
+    transform_labels=TRANSFORM_LABELS,
+    output_path=plot_dir / "anova_radar_by_degradation.png",
+    show=True,
+)
+
+
+# In[8]:
+
+
+_ = plot_anova_radar_by_degradation(
+    variance_partition_df,
+    component_specs=RADAR_COMPONENTS,
+    metric_order=METRIC_ORDER,
+    metric_labels=RADAR_METRIC_LABELS,
+    transform_order=TRANSFORM_ORDER,
+    transform_labels=TRANSFORM_LABELS,
+    layout="single_row",
+    output_path=plot_dir / "anova_radar_by_degradation_single_row.png",
+    show=True,
 )
