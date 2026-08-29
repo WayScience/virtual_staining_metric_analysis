@@ -1,8 +1,8 @@
-import math
 from collections.abc import Callable, Collection, Mapping, Sequence
 from pathlib import Path
-from typing import Any, NotRequired, TypedDict
+from typing import Any, Literal
 
+import matplotlib.patheffects as path_effects
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -11,337 +11,10 @@ from matplotlib.figure import Figure
 from matplotlib.patches import Patch
 
 
-class RadarComponentSpec(TypedDict):
-    columns: Collection[str]
-    color: str
-    label: NotRequired[str]
-    alpha: NotRequired[float]
-
-
-def _prep_radar_plot(
-    anova_df: pd.DataFrame,
-    component_specs: Mapping[str, RadarComponentSpec],
-) -> pd.DataFrame:
-    required_columns = {
-        "metric_name",
-        "transform_name",
-        "term",
-        "eta2",
-    }
-    missing_columns = required_columns.difference(anova_df.columns)
-    if missing_columns:
-        raise ValueError(
-            f"variance_partition_df is missing required columns: {sorted(missing_columns)}"
-        )
-
-    if not component_specs:
-        raise ValueError("component_specs must define at least one component.")
-
-    term_to_component: dict[str, str] = {}
-    for component, spec in component_specs.items():
-        for term in spec["columns"]:
-            if term in term_to_component:
-                raise ValueError(f"ANOVA term {term!r} is assigned to multiple components.")
-            term_to_component[term] = component
-
-    anova_df = anova_df.copy()
-    anova_df["term"] = anova_df["term"].astype(str)
-    anova_df["eta2"] = pd.to_numeric(
-        anova_df["eta2"],
-        errors="coerce",
-    ).fillna(0.0)
-    anova_df["component"] = anova_df["term"].map(term_to_component).fillna("unmapped")
-
-    unmapped_df = anova_df.loc[
-        anova_df["component"].eq("unmapped"),
-        ["term", "eta2"],
-    ]
-
-    if not unmapped_df.empty:
-        unmapped_summary = (
-            unmapped_df.groupby("term", as_index=False)["eta2"]
-            .sum()
-            .sort_values("eta2", ascending=False)
-        )
-
-        unmapped_pct = 100.0 * unmapped_summary["eta2"].sum()
-
-        print(
-            f"Warning: {unmapped_pct:.3f}% of total eta2 is assigned "
-            "to unmapped terms and will be excluded:"
-        )
-
-        print(unmapped_summary.to_string(index=False))
-
-    radar_comp = (
-        anova_df.loc[
-            anova_df["component"].ne("unmapped"),
-            [
-                "metric_name",
-                "transform_name",
-                "component",
-                "eta2",
-            ],
-        ]
-        .groupby(
-            [
-                "metric_name",
-                "transform_name",
-                "component",
-            ],
-            as_index=False,
-        )["eta2"]
-        .sum()
-    )
-
-    radar_comp["pct"] = 100.0 * radar_comp["eta2"]
-
-    radar_wide = radar_comp.pivot_table(
-        index=[
-            "metric_name",
-            "transform_name",
-        ],
-        columns="component",
-        values="pct",
-        aggfunc="sum",
-        fill_value=0.0,
-    ).reset_index()
-
-    for component in component_specs:
-        if component not in radar_wide.columns:
-            radar_wide[component] = 0.0
-
-    return radar_wide.loc[:, ["metric_name", "transform_name", *component_specs]]
-
-
-def plot_anova_radar(
-    anova_df: pd.DataFrame,
-    *,
-    component_specs: Mapping[str, RadarComponentSpec],
-    metric_labels: Mapping[str, str] | None = None,
-    metric_order: Sequence[str] | None = None,
-    transform_labels: Mapping[str, str] | None = None,
-    transform_order: Sequence[str] | None = None,
-    output_path: Path | str | None = None,
-    dpi: int = 300,
-    show: bool = True,
-    legend_adjust: float = 0.15,
-) -> tuple[Figure, np.ndarray]:
-    """Plot ordered ANOVA component groups as stacked radar charts."""
-    component_order = list(component_specs)
-    metric_labels = dict(metric_labels or {})
-    transform_labels = dict(transform_labels or {})
-
-    radar_wide = _prep_radar_plot(
-        anova_df=anova_df,
-        component_specs=component_specs,
-    )
-
-    if transform_order is None:
-        transform_order = sorted(radar_wide["transform_name"].astype(str).unique().tolist())
-    else:
-        transform_order = list(transform_order)
-
-    metrics_present = [
-        metric for metric in (metric_order or []) if metric in radar_wide["metric_name"].unique()
-    ]
-
-    if not metrics_present:
-        metrics_present = sorted(radar_wide["metric_name"].astype(str).unique().tolist())
-
-    if not metrics_present or not transform_order:
-        raise ValueError("No metrics or transforms remain for plotting.")
-
-    angles = np.linspace(
-        0,
-        2 * np.pi,
-        len(transform_order),
-        endpoint=False,
-    )
-
-    def close_cycle(values: Sequence[float] | np.ndarray) -> np.ndarray:
-        values = np.asarray(values, dtype=float)
-        return np.concatenate([values, values[:1]])
-
-    angles_closed = close_cycle(angles)
-
-    def fill_band(
-        ax: Axes,
-        lower_closed: np.ndarray,
-        upper_closed: np.ndarray,
-        color: str,
-        alpha: float,
-        zorder: int,
-    ) -> None:
-        theta_polygon = np.concatenate([angles_closed, angles_closed[::-1]])
-        radial_polygon = np.concatenate(
-            [
-                upper_closed,
-                lower_closed[::-1],
-            ]
-        )
-
-        ax.fill(
-            theta_polygon,
-            radial_polygon,
-            facecolor=color,
-            edgecolor=color,
-            linewidth=1.2,
-            alpha=alpha,
-            zorder=zorder,
-        )
-
-    n_metrics = len(metrics_present)
-    ncols = min(4, n_metrics)
-    nrows = math.ceil(n_metrics / ncols)
-
-    fig, axes = plt.subplots(
-        nrows,
-        ncols,
-        figsize=(
-            3.2 * ncols,
-            3.3 * nrows + 0.7,
-        ),
-        subplot_kw={
-            "polar": True,
-        },
-    )
-    axes = np.atleast_1d(axes).ravel()
-
-    for i, metric_name in enumerate(metrics_present):
-        ax = axes[i]
-
-        metric_df = (
-            radar_wide.loc[
-                radar_wide["metric_name"].eq(metric_name),
-                [
-                    "transform_name",
-                    *component_order,
-                ],
-            ]
-            .groupby(
-                "transform_name",
-                as_index=False,
-            )[component_order]
-            .mean()
-            .set_index("transform_name")
-            .reindex(transform_order)
-            .fillna(0.0)
-            .reset_index()
-        )
-
-        lower_boundary = np.zeros(
-            len(transform_order),
-            dtype=float,
-        )
-
-        for index, component in enumerate(component_order):
-            spec = component_specs[component]
-            zorder = len(component_order) - index
-            upper_boundary = lower_boundary + metric_df[component].to_numpy(dtype=float)
-
-            fill_band(
-                ax=ax,
-                lower_closed=close_cycle(lower_boundary),
-                upper_closed=close_cycle(upper_boundary),
-                color=spec["color"],
-                alpha=spec.get("alpha", 0.55),
-                zorder=zorder,
-            )
-
-            ax.plot(
-                angles_closed,
-                close_cycle(upper_boundary),
-                color=spec["color"],
-                linewidth=1.5,
-                zorder=zorder + 0.5,
-            )
-
-            lower_boundary = upper_boundary
-
-        # Put first degradation at the top and proceed clockwise.
-        ax.set_theta_offset(np.pi / 2)
-        ax.set_theta_direction(-1)
-
-        ax.set_xticks(angles)
-        ax.set_xticklabels(
-            [transform_labels.get(name, name) for name in transform_order],
-            fontsize=8.5,
-        )
-
-        ax.set_ylim(0, 100)
-        ax.set_yticks([20, 40, 60, 80, 100])
-        ax.set_yticklabels(["20", "40", "60", "80", "100"], fontsize=7.5)
-
-        ax.set_rlabel_position(15)
-        ax.grid(alpha=0.3)
-
-        ax.set_title(
-            metric_labels.get(metric_name, metric_name),
-            fontsize=10,
-            pad=17,
-        )
-
-    # Hide unused panels.
-    for j in range(n_metrics, len(axes)):
-        axes[j].set_visible(False)
-
-    legend_handles = [
-        Patch(
-            facecolor=spec["color"],
-            edgecolor=spec["color"],
-            alpha=spec.get("alpha", 0.55),
-            label=spec.get("label", component),
-        )
-        for component, spec in component_specs.items()
-    ]
-
-    fig.legend(
-        handles=legend_handles,
-        loc="lower center",
-        bbox_to_anchor=(0.5, -legend_adjust),
-        ncol=len(component_specs),
-        frameon=False,
-        title="Variance component",
-        fontsize=9,
-        title_fontsize=10,
-    )
-
-    fig.tight_layout()
-
-    fig.subplots_adjust(
-        bottom=0.14,
-        top=0.90,
-        wspace=0.35,
-        hspace=0.45,
-    )
-
-    if output_path is not None:
-        output_path = Path(output_path)
-        output_path.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
-
-        fig.savefig(
-            output_path,
-            dpi=dpi,
-            bbox_inches="tight",
-        )
-
-        print(f"Saved figure to {output_path}")
-
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
-
-    return fig, axes
-
-
 def plot_anova_variance_partition(
     anova_df: pd.DataFrame,
     *,
+    ax: Axes | None = None,
     row_cols: Sequence[str] = ("metric_name", "transform_name"),
     term_col: str = "term",
     value_col: str = "eta2",
@@ -362,17 +35,37 @@ def plot_anova_variance_partition(
     ]
     | None = None,
     row_label_fn: Callable[[tuple[Any, ...]], str] | None = None,
+    row_group_col: str | None = None,
+    row_group_colors: Mapping[Any, str] | None = None,
+    row_group_label_x: float = -0.24,
+    row_group_line_x: float = -0.12,
+    row_group_label_color: str = "black",
+    row_group_label_fontsize: float | None = None,
+    row_group_label_fontweight: str | None = None,
+    row_group_linewidth: float = 2.5,
+    row_group_line_gap: float = 0.0,
+    row_group_gap: float = 0.0,
+    row_labels_side: Literal["left", "right", "inside"] = "left",
+    row_label_x: float = 0.99,
+    row_label_color: str = "black",
+    row_label_fontsize: float | None = None,
+    row_label_outline_width: float = 2.0,
+    show_y_axis: bool = True,
     xlabel: str = r"Variance explained ($\eta^2$)",
+    xlabel_fontsize: float | None = None,
     ylabel: str | None = None,
     figsize_width: float = 12,
+    figsize_height: float | None = None,
     row_height: float = 0.32,
     minimum_height: float = 6,
     bar_width: float = 0.85,
     output_path: Path | str | None = None,
     dpi: int = 300,
     show: bool = True,
+    show_legend: bool = True,
     legend_adjust: float = 0.15,
     hatch_legend_adjust: float = 0.15,
+    title: str | None = None,
 ) -> tuple[Figure, Axes, pd.DataFrame]:
     """Plot stacked ANOVA variance partitions from canonical term names."""
     row_cols = tuple(row_cols)
@@ -395,6 +88,19 @@ def plot_anova_variance_partition(
     hatch_groups = dict(hatch_groups or {})
     row_orders = dict(row_orders or {})
     row_value_labels = dict(row_value_labels or {})
+    row_group_colors = dict(row_group_colors or {})
+
+    if row_group_col is not None and row_group_col not in row_cols:
+        raise ValueError(f"row_group_col must be one of row_cols: {list(row_cols)}")
+
+    if row_labels_side not in {"left", "right", "inside"}:
+        raise ValueError("row_labels_side must be 'left', 'right', or 'inside'.")
+
+    if row_group_gap < 0:
+        raise ValueError("row_group_gap must be non-negative.")
+
+    if not 0 <= row_group_line_gap < bar_width:
+        raise ValueError("row_group_line_gap must be non-negative and less than bar_width.")
 
     work_df = anova_df.loc[
         :,
@@ -460,7 +166,12 @@ def plot_anova_variance_partition(
     observed_terms = list(plot_wide.columns)
 
     if term_order is None:
-        terms = sorted(observed_terms, key=str)
+        preferred = [term for term in term_labels if term in observed_terms]
+        remaining = sorted(
+            set(observed_terms).difference(preferred),
+            key=str,
+        )
+        terms = preferred + remaining
     else:
         preferred = [term for term in term_order if term in observed_terms]
         remaining = sorted(
@@ -472,16 +183,36 @@ def plot_anova_variance_partition(
     plot_wide = plot_wide.loc[:, terms]
 
     # Row labels.
+    if row_label_fn is not None and row_group_col is not None:
+        raise ValueError("row_label_fn cannot be combined with row_group_col.")
+
     if row_label_fn is not None:
         row_labels = [row_label_fn(values) for values in plot_wide.index]
     else:
+        label_columns = [column for column in row_cols if column != row_group_col]
         row_labels = [
             " | ".join(
                 row_value_labels.get(column, {}).get(value, str(value))
                 for column, value in zip(row_cols, values)
+                if column in label_columns
             )
             for values in plot_wide.index
         ]
+
+    row_positions = np.arange(len(row_labels), dtype=float)
+    group_values: list[Any] | None = None
+
+    if row_group_col is not None:
+        group_level = row_cols.index(row_group_col)
+        group_values = [values[group_level] for values in plot_wide.index]
+        group_numbers = np.zeros(len(group_values), dtype=float)
+
+        for row_number in range(1, len(group_values)):
+            group_numbers[row_number] = group_numbers[row_number - 1] + (
+                group_values[row_number] != group_values[row_number - 1]
+            )
+
+        row_positions += group_numbers * row_group_gap
 
     # Term colors.
     fallback_colors = plt.rcParams["axes.prop_cycle"].by_key()["color"]
@@ -497,12 +228,19 @@ def plot_anova_variance_partition(
     plot_values = plot_wide.copy()
     plot_values.columns = [term_labels.get(term, str(term)) for term in terms]
 
-    figure_height = max(
-        minimum_height,
-        row_height * len(row_labels),
-    )
+    if figsize_height is None:
+        figure_height = max(
+            minimum_height,
+            row_height * len(row_labels),
+        )
+    else:
+        figure_height = figsize_height
 
-    fig, ax = plt.subplots(figsize=(figsize_width, figure_height))
+    owns_figure = ax is None
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(figsize_width, figure_height))
+    else:
+        fig = ax.figure
 
     plot_values.plot(
         kind="barh",
@@ -513,6 +251,14 @@ def plot_anova_variance_partition(
         edgecolor="white",
         linewidth=0.35,
     )
+
+    if row_group_gap:
+        for container in ax.containers:
+            for row_number, patch in enumerate(container.patches):
+                patch.set_y(patch.get_y() + row_positions[row_number] - row_number)
+
+    if not show_legend and ax.get_legend() is not None:
+        ax.get_legend().remove()
 
     # Hatching.
     term_hatches = {
@@ -528,21 +274,87 @@ def plot_anova_variance_partition(
                 patch.set_edgecolor("white")
                 patch.set_linewidth(0.35)
 
-    ax.set_xlabel(xlabel)
+    ax.set_xlabel(xlabel, fontsize=xlabel_fontsize)
     ax.set_ylabel(ylabel if ylabel is not None else " | ".join(row_cols))
 
-    ax.set_yticks(np.arange(len(row_labels)))
-    ax.set_yticklabels(row_labels)
-    ax.invert_yaxis()
+    ax.set_yticks(row_positions)
 
-    # Term legend.
-    term_legend = ax.legend(
-        title="Term",
-        loc="upper center",
-        bbox_to_anchor=(0.4, -0.07),
-        ncol=min(4, max(1, len(terms))),
-        frameon=False,
-    )
+    if row_labels_side == "inside":
+        ax.set_yticklabels([])
+        ax.tick_params(axis="y", left=False, right=False, length=0)
+
+        text_effects = None
+        if row_label_outline_width > 0:
+            text_effects = [
+                path_effects.Stroke(linewidth=row_label_outline_width, foreground="white"),
+                path_effects.Normal(),
+            ]
+
+        for row_position, row_label in zip(row_positions, row_labels):
+            ax.text(
+                row_label_x,
+                row_position,
+                row_label,
+                color=row_label_color,
+                fontsize=row_label_fontsize,
+                ha="right",
+                va="center",
+                transform=ax.get_yaxis_transform(),
+                path_effects=text_effects,
+                zorder=20,
+            )
+    else:
+        ax.set_yticklabels(row_labels)
+        ax.yaxis.set_ticks_position(row_labels_side)
+        ax.tick_params(
+            axis="y",
+            labelleft=row_labels_side == "left",
+            labelright=row_labels_side == "right",
+        )
+
+    ax.set_ylim(row_positions[-1] + 0.5, -0.5)
+
+    if group_values is not None:
+        group_start = 0
+
+        for row_number in range(1, len(group_values) + 1):
+            group_ends = row_number == len(group_values) or (
+                group_values[row_number] != group_values[group_start]
+            )
+            if not group_ends:
+                continue
+
+            group_value = group_values[group_start]
+            group_end = row_number - 1
+            group_center = (row_positions[group_start] + row_positions[group_end]) / 2
+            group_color = row_group_colors.get(group_value, "black")
+            line_inset = row_group_line_gap / 2
+
+            ax.text(
+                row_group_label_x,
+                group_center,
+                row_value_labels.get(row_group_col, {}).get(group_value, str(group_value)),
+                color=row_group_label_color,
+                fontsize=row_group_label_fontsize,
+                fontweight=row_group_label_fontweight,
+                ha="right",
+                va="center",
+                transform=ax.get_yaxis_transform(),
+                clip_on=False,
+            )
+            ax.plot(
+                [row_group_line_x, row_group_line_x],
+                [
+                    row_positions[group_start] - bar_width / 2 + line_inset,
+                    row_positions[group_end] + bar_width / 2 - line_inset,
+                ],
+                color=group_color,
+                linewidth=row_group_linewidth,
+                solid_capstyle="butt",
+                transform=ax.get_yaxis_transform(),
+                clip_on=False,
+            )
+            group_start = row_number
 
     # Optional hatch legend.
     hatch_handles = [
@@ -564,22 +376,40 @@ def plot_anova_variance_partition(
             )
         )
 
-    if hatch_handles:
-        ax.legend(
-            handles=hatch_handles,
-            title="Shading",
+    if show_legend:
+        term_legend = ax.legend(
+            title="Term",
             loc="upper center",
-            bbox_to_anchor=(0.5, -hatch_legend_adjust),
-            ncol=min(3, len(hatch_handles)),
+            bbox_to_anchor=(0.4, -0.07),
+            ncol=min(4, max(1, len(terms))),
             frameon=False,
         )
-        ax.add_artist(term_legend)
+
+        if hatch_handles:
+            ax.legend(
+                handles=hatch_handles,
+                title="Shading",
+                loc="upper center",
+                bbox_to_anchor=(0.5, -hatch_legend_adjust),
+                ncol=min(3, len(hatch_handles)),
+                frameon=False,
+            )
+            ax.add_artist(term_legend)
 
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
 
-    fig.tight_layout()
-    fig.subplots_adjust(bottom=legend_adjust)
+    if not show_y_axis:
+        ax.spines["left"].set_visible(False)
+        ax.tick_params(axis="y", left=False, right=False, length=0)
+        ax.set_ylabel("")
+
+    if title is not None:
+        ax.set_title(title, loc="left", fontweight="bold")
+
+    if owns_figure:
+        fig.tight_layout()
+        fig.subplots_adjust(bottom=legend_adjust)
 
     if output_path is not None:
         output_path = Path(output_path)
@@ -596,9 +426,9 @@ def plot_anova_variance_partition(
 
         print(f"Saved figure to {output_path}")
 
-    if show:
+    if show and owns_figure:
         plt.show()
-    else:
+    elif not show and owns_figure:
         plt.close(fig)
 
     return fig, ax, plot_wide

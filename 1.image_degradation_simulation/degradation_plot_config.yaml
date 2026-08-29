@@ -1,0 +1,41 @@
+metrics:
+  order:
+    - dists
+    - lpips
+    - foreground_ssim
+    - ssim
+    - foreground_psnr
+    - psnr
+    - mae
+  labels:
+    dists: DISTS
+    lpips: LPIPS
+    foreground_ssim: Foreground SSIM
+    ssim: SSIM
+    foreground_psnr: Foreground PSNR
+    psnr: PSNR
+    mae: MAE
+  palette:
+    dists: "#1F78B4"
+    lpips: "#5E3C99"
+    foreground_ssim: "#66C2A5"
+    ssim: "#1B9E77"
+    foreground_psnr: "#FDB863"
+    psnr: "#E66101"
+    mae: "#9E9E9E"
+
+transforms:
+  order:
+    - gauss_noise
+    - random_gamma
+    - dilate
+    - erode
+    - grid_distortion
+    - gaussian_blur
+  labels:
+    dilate: Dilate
+    erode: Erode
+    gauss_noise: "Gaussian\nnoise"
+    gaussian_blur: "Gaussian\nblur"
+    grid_distortion: "Grid\ndistortion"
+    random_gamma: "Gamma\ncorrection"
