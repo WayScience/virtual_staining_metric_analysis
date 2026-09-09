@@ -25,22 +25,35 @@ Options:
 EOF
 }
 
+# Default to the short local test train on subsetted data and smaller epoch number.
+# The options below enables the switch to the full run.
 SUBSET_TRAINING=True
 INPUT_CHANNEL="OrigBrightfield"
 TARGET_CHANNEL="OrigDNA"
 CONFLUENCE=1000
+
+# This launcher supports the local-tracking mode of the notebook only; 
+# the HPC launcher configures its own paths and file-based MLflow tracking separately.
 ON_HPC=False
 
+# Parse options from left to right, consuming a value after each value-bearing
+# option and rejecting missing values or unknown options.
 while (( $# > 0 )); do
     case "$1" in
         --subset)
+        # explicitly call script default to run the short local test train on subsetted data
             SUBSET_TRAINING=True
             shift
             ;;
         --full)
+        # override the default to run the full production training on all data
             SUBSET_TRAINING=False
             shift
             ;;
+        # The following three options require a value after the option name.
+        # allows overriding the default input channel, target channel, and confluence for local training.
+        # changing of target channel and confluence is useful for training select models,
+        # without having to run the full grid.
         --input-channel|--target-channel|--confluence)
             if (( $# < 2 )); then
                 echo "Missing value for $1" >&2
