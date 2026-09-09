@@ -1,7 +1,13 @@
 #!/usr/bin/env bash
 
-# Run the three architectures sequentially on a configurable local condition.
-# Start the local MLflow server expected by 2.2.train_unet.py before running.
+# Run training of 3 architectures sequentially on a configurable local condition.
+# Before running this script, please ensure you have started a local mlflow logging server.
+# This can be done in any terminal, with a virtual environment where mlflow is installed,
+# by running `mlflow server --host 127.0.0.1 --port 5000`
+# Please ensure that the server continues to run while training.
+
+# Note that script 2.2.train_unet.py is hard-coded to log to http://127.0.0.1:5000,
+# Should you need to change the host or port, please modify the script accordingly.
 
 set -euo pipefail
 
