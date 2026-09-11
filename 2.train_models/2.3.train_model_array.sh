@@ -40,9 +40,10 @@ set -euo pipefail
 # Project / environment
 # ---------------------------------------------------------------------------
 
-# Slurm may start the job from an arbitrary directory. Change this placeholder
-# to the absolute path of the converted training script on the target cluster.
-cd /path/to/project/2.train_models/nbconverted
+# Resolve the converted training script relative to this submission script so
+# the job works regardless of the directory from which sbatch was invoked.
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+cd "${SCRIPT_DIR}/nbconverted"
 
 # Activate the project environment here when it is not initialized by the
 # cluster module/profile configuration, for example:
