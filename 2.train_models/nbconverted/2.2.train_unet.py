@@ -73,6 +73,8 @@ TRAIN_ROOT = Path(os.environ.get(
 TRAIN_ROOT.mkdir(parents=True, exist_ok=True)
 
 # only needed if not ON_HPC
+# if on HPC, this is disregarded and the script spins up its own
+# local file-based mlflow server. 
 LOCAL_MLFLOW_SERVER = "http://127.0.0.1:5000"
 
 SEED = 42
