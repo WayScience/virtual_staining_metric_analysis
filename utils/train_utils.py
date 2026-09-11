@@ -105,6 +105,15 @@ def _merge_path_filename(
     path_col_template: str = "PathName_{}",
     file_col_template: str = "FileName_{}",
 ) -> Path:
+    """
+    Merge the path and filename columns for a given channel in a DataFrame row.
+
+    :param row: A row from the DataFrame.
+    :param chan: The channel name to merge the path and filename for.
+    :param path_col_template: Template for the path column name.
+    :param file_col_template: Template for the file column name.
+    :return: The merged path as a Path object.
+    """
     return Path(row[path_col_template.format(chan)]) / row[file_col_template.format(chan)]
 
 
@@ -118,6 +127,19 @@ def build_dataset_inputs(
     obj_coord_y_col: str | None = "Metadata_Cells_Location_Center_Y",
     **kwargs,
 ) -> tuple[pd.DataFrame, list[dict] | None]:
+    """
+    Build dataset inputs by merging image file paths with metadata and optional profile information.
+
+    :param loaddata: DataFrame containing the image file paths and metadata.
+    :param input_chan: The input channel name.
+    :param target_chan: The target channel name(s).
+    :param profile: Optional DataFrame containing additional profile information.
+    :param unique_id_cols: List of columns used as unique identifiers for merging with the profile.
+    :param obj_coord_x_col: Column name for the X coordinate of objects.
+    :param obj_coord_y_col: Column name for the Y coordinate of objects.
+    :param kwargs: Additional keyword arguments.
+    :return: A tuple containing the merged DataFrame and a list of point mappings (or None if not applicable).
+    """
 
     if unique_id_cols is None:
         unique_id_cols = ["Metadata_Plate", "Metadata_Well", "Metadata_Site"]
