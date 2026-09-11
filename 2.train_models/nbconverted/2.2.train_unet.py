@@ -7,7 +7,7 @@
 # One run of notebook/script will only train model for one target, confluence combiantion. 
 # The notebook is largely for demo purpose on smaller train epoch and batch size setting, and defaults to UNet
 
-# In[4]:
+# In[1]:
 
 
 from pathlib import Path
@@ -57,7 +57,7 @@ from virtual_stain_flow.vsf_logging.callbacks.PlotCallback import PlotPrediction
 
 # ## Training hyper-parameters
 
-# In[ ]:
+# In[2]:
 
 
 ON_HPC = require_bool_env("ON_HPC", default=False)
@@ -98,15 +98,15 @@ LR = 2e-4
 TRAINING_MODE = "subset" if SUBSET_TRAINING else "full"
 
 print(
-    "Experiment configuration:\n"
-    f"  ARCHITECTURE={ARCHITECTURE}\n"
-    f"  TRAINING_MODE={TRAINING_MODE}\n"
-    f"  INPUT_CHANNEL={INPUT_CHANNEL}\n"
-    f"  TARGET_CHANNEL={TARGET_CHANNEL}\n"
-    f"  CONFLUENCE={CONFLUENCE}\n"
-    f"  SUBSET_N={SUBSET_N}\n"
-    f"  EPOCHS={EPOCHS}\n"
-    f"  BATCH_SIZE={BATCH_SIZE}",
+    f"""Experiment configuration:
+  ARCHITECTURE={ARCHITECTURE}
+  TRAINING_MODE={TRAINING_MODE}
+  INPUT_CHANNEL={INPUT_CHANNEL}
+  TARGET_CHANNEL={TARGET_CHANNEL}
+  CONFLUENCE={CONFLUENCE}
+  SUBSET_N={SUBSET_N}
+  EPOCHS={EPOCHS}
+  BATCH_SIZE={BATCH_SIZE}""",
     flush=True,
 )
 
