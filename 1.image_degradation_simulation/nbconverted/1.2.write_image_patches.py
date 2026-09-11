@@ -68,6 +68,9 @@ table = dataset.to_table(
     filter=ds.field("Metadata_Plate").isin(["BR00143976", "BR00143977"])
 )
 loaddata_df = table.to_pandas()
+print(f"Loaded {len(loaddata_df):,} records from {len(loaddata_files)} loaddata files.")
+unique_plate_wells = loaddata_df[["Metadata_Plate", "Metadata_Well"]].drop_duplicates()
+print(f"Found {len(unique_plate_wells):,} unique plate-well combinations.")
 loaddata_df.head()
 
 
@@ -194,6 +197,7 @@ crop_index_sampled = (
     .sort_index()
 )
 
+print(f"Sampled {len(crop_index_sampled):,} crops from {len(crop_index_sampled[group_cols].drop_duplicates()):,} unique plate-well combinations.")
 crop_index_sampled.head()
 
 
