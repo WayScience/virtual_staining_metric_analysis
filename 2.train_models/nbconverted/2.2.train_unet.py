@@ -284,7 +284,7 @@ for split, _loaddata_df in zip(
 
 # ## Configure model and trainer
 
-# In[ ]:
+# In[7]:
 
 
 # Batch with DataLoader
@@ -432,7 +432,7 @@ with torch.random.fork_rng(devices=cuda_devices):
 
 # ## Configure logger
 
-# In[ ]:
+# In[8]:
 
 
 # Plotting callback to visualize predictions during training
@@ -496,7 +496,7 @@ logger = MlflowLogger(
 )
 
 
-# In[8]:
+# In[9]:
 
 
 trainer.train(logger=logger, epochs=EPOCHS)
