@@ -1,8 +1,18 @@
 import os
 import sys
 from pathlib import Path
+from typing import Literal, TypeVar, cast
 
 import pandas as pd
+
+T = TypeVar("T", bound=str)
+Architecture = Literal["UNet", "wGAN", "UNeXt"]
+
+ARCHITECTURES: tuple[Architecture, ...] = (
+    "UNet",
+    "wGAN",
+    "UNeXt",
+)
 
 
 def _running_in_ipykernel() -> bool:
@@ -72,12 +82,38 @@ def require_bool_env(name: str, default: bool | None = None) -> bool:
         )
 
 
+def require_choice_env(
+    name: str,
+    choices: tuple[T, ...],
+    default: T | None = None,
+) -> T:
+    """Return a required configuration value restricted to allowed choices."""
+    value = require_env(name, default=default)
+
+    if value not in choices:
+        allowed = ", ".join(repr(choice) for choice in choices)
+        raise RuntimeError(
+            f"Environment variable {name!r} must be one of [{allowed}], but received {value!r}."
+        )
+
+    return cast(T, value)
+
+
 def _merge_path_filename(
     row: pd.Series,
     chan: str,
     path_col_template: str = "PathName_{}",
     file_col_template: str = "FileName_{}",
 ) -> Path:
+    """
+    Merge the path and filename columns for a given channel in a DataFrame row.
+
+    :param row: A row from the DataFrame.
+    :param chan: The channel name to merge the path and filename for.
+    :param path_col_template: Template for the path column name.
+    :param file_col_template: Template for the file column name.
+    :return: The merged path as a Path object.
+    """
     return Path(row[path_col_template.format(chan)]) / row[file_col_template.format(chan)]
 
 
@@ -91,6 +127,19 @@ def build_dataset_inputs(
     obj_coord_y_col: str | None = "Metadata_Cells_Location_Center_Y",
     **kwargs,
 ) -> tuple[pd.DataFrame, list[dict] | None]:
+    """
+    Build dataset inputs by merging image file paths with metadata and optional profile information.
+
+    :param loaddata: DataFrame containing the image file paths and metadata.
+    :param input_chan: The input channel name.
+    :param target_chan: The target channel name(s).
+    :param profile: Optional DataFrame containing additional profile information.
+    :param unique_id_cols: List of columns used as unique identifiers for merging with the profile.
+    :param obj_coord_x_col: Column name for the X coordinate of objects.
+    :param obj_coord_y_col: Column name for the Y coordinate of objects.
+    :param kwargs: Additional keyword arguments.
+    :return: A tuple containing the merged DataFrame and a list of point mappings (or None if not applicable).
+    """
 
     if unique_id_cols is None:
         unique_id_cols = ["Metadata_Plate", "Metadata_Well", "Metadata_Site"]
