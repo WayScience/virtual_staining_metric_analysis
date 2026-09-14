@@ -230,9 +230,9 @@ def plot_burden_heatmaps(
         raise ValueError("No burden data available to plot.")
 
     if metric_order is None:
-        metric_order = list(burden_df["metric_name"].cat.categories)
+        metric_order = list(burden_df["metric_name"].drop_duplicates())
     if transform_order is None:
-        transform_order = list(burden_df["transform_name"].cat.categories)
+        transform_order = list(burden_df["transform_name"].drop_duplicates())
     if metric_labels is None:
         metric_labels = {metric: metric for metric in metric_order}
     if transform_labels is None:
