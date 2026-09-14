@@ -167,7 +167,12 @@ def fit_anova(
     if not np.isfinite(total_ss) or total_ss <= 0:
         return None
 
-    residual_ss = table.loc["Residual", "sum_sq"]
+    # ANOVA decomposition on unbalanced/rank-deficient subsets can yield
+    # small negative SS from numeric noise. Clamp to zero before effect sizes.
+    ss_values = pd.to_numeric(table["sum_sq"], errors="coerce")
+    table["sum_sq"] = np.where(np.isfinite(ss_values) & (ss_values > 0), ss_values, 0.0)
+
+    residual_ss = float(table.loc["Residual", "sum_sq"])
 
     # compute eta2 for each term, which is the proportion of total variance
     # explained by that term
