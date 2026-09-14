@@ -201,12 +201,25 @@ def _plot_anova_radar(
     observed_panels = radar_wide[panel_by].astype(str).unique().tolist()
     observed_radials = radar_wide[radial_by].astype(str).unique().tolist()
 
-    panels = (
-        [value for value in panel_order if value in observed_panels]
-        if panel_order is not None
-        else sorted(observed_panels)
-    )
-    radials = list(radial_order) if radial_order is not None else sorted(observed_radials)
+    if panel_order is not None:
+        preferred_panels = [value for value in panel_order if value in observed_panels]
+        remaining_panels = sorted(
+            set(observed_panels).difference(preferred_panels),
+            key=str,
+        )
+        panels = preferred_panels + remaining_panels
+    else:
+        panels = sorted(observed_panels)
+
+    if radial_order is not None:
+        preferred_radials = [value for value in radial_order if value in observed_radials]
+        remaining_radials = sorted(
+            set(observed_radials).difference(preferred_radials),
+            key=str,
+        )
+        radials = preferred_radials + remaining_radials
+    else:
+        radials = sorted(observed_radials)
 
     if not panels:
         panels = sorted(observed_panels)
