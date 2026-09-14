@@ -88,11 +88,18 @@ regression_config = {
 }
 
 bootstrap_config = {
-    "n_boot": 100,
+    # 300 times for bootstrapping
+    # could be increased for more robust estimates
+    "n_boot": 300,
     "sample_frac": 0.5,
     "replace": True,
     "standardize": False,
     "robust_cov": None,
+    # minimum group size for nested regression
+    # should in theory be adjusted relative to the complexity of the model
+    # useful here as guards against aniticpated masked metric computation failures
+    # due to reduced foreground by certain degradation types (gamma correction, erosion, ...)
+    # is somewhat arbitrary but works fine with the simple nested regression setup
     "min_group_size": 25,
 }
 
@@ -207,7 +214,7 @@ boot_res_density = pd.concat(boot_res_density_frames, ignore_index=True)
 boot_res_cell = pd.concat(boot_res_cell_frames, ignore_index=True)
 
 
-# In[7]:
+# In[6]:
 
 
 _ = summarize_r2_scatter_bootstrap(
