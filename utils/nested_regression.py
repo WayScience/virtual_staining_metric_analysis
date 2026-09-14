@@ -79,10 +79,9 @@ def _fit_ols_formula(
     :return: A fitted OLS regression results object.
     """
     model = smf.ols(formula, data=df)
-    res = model.fit()
     if robust_cov:
-        res = res.get_robustcov_results(cov_type=robust_cov)
-    return res
+        return model.fit(cov_type=robust_cov)
+    return model.fit()
 
 
 def _compute_effect_sizes(res_re, res_fu) -> dict[str, float]:
