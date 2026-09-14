@@ -51,7 +51,7 @@ metric_dir = analysis_dir / "patches" / "metrics"
 if not metric_dir.exists():
     raise FileNotFoundError(
         f"Metric directory {metric_dir} does not exist. "
-        "Please run [] to generate the metrics before running this notebook."
+        "Please run notebook 1.4 to generate the metrics before running this notebook."
     )
 metric_subdirs = [d for d in metric_dir.iterdir() if d.is_dir()]
 print(f"Found {len(metric_subdirs)} metric subdirectories:")
