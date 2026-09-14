@@ -64,7 +64,10 @@ def _prep_radar_plot(
             .sort_values("eta2", ascending=False)
         )
 
-        unmapped_pct = 100.0 * unmapped_summary["eta2"].sum()
+        total_eta2 = anova_df["eta2"].sum()
+        unmapped_pct = (
+            100.0 * unmapped_summary["eta2"].sum() / total_eta2 if total_eta2 > 0 else 0.0
+        )
 
         print(
             f"Warning: {unmapped_pct:.3f}% of total eta2 is assigned "
