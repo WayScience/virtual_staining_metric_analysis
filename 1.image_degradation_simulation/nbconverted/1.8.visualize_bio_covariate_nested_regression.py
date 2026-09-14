@@ -54,8 +54,10 @@ METRIC_LABELS = degradation_plot_config["metrics"]["labels"]
 METRIC_PALETTE = degradation_plot_config["metrics"]["palette"]
 TRANSFORM_ORDER = degradation_plot_config["transforms"]["order"]
 TRANSFORM_LABELS = degradation_plot_config["transforms"]["labels"]
+if not METRIC_PALETTE:
+    raise ValueError("METRIC_PALETTE is not defined in the degradation plot config.")
 
-ABLATION_MARKERS = {
+DEGRADATION_MARKERS = {
     "dilate": "o",
     "erode": "^",
     "gaussian_blur": "s",
@@ -92,7 +94,7 @@ plot_nested_r2_multi(
     metric_colors=METRIC_PALETTE,
     metric_order=METRIC_ORDER,
     transform_labels=TRANSFORM_LABELS,
-    transform_markers=ABLATION_MARKERS,
+    transform_markers=DEGRADATION_MARKERS,
     output_path=output_dir / "nested_r2_scatter.png",
     dpi=300,
     show=True
