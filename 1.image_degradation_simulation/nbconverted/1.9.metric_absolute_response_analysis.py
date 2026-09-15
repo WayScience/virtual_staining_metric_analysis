@@ -61,6 +61,7 @@ analysis_output_dir = analysis_dir / "metric_absolute_response_analysis" / refer
 
 # for final results 
 results_output_dir = Path("results") / "metric_absolute_response_analysis"
+results_output_dir.mkdir(parents=True, exist_ok=True)
 
 
 # ## Select a representative reference image
