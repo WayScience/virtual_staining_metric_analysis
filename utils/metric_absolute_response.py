@@ -1,7 +1,14 @@
-"""
-Utilities for iterative metric absolute response analysis.
-Contains a preset for smaller effect degradations meant to be applied repeatedly,
-    plus orchestrators for the actual iterative application.
+"""Utilities for iterative metric absolute response analysis.
+
+This module provides a small, reproducible workflow for studying how image quality
+metrics respond to repeated application of mild degradations. It includes:
+
+1. A validated configuration object for iterative experiments.
+2. A deterministic set of single-step degradations that can be applied cumulatively.
+3. A metric evaluator that executes a configurable metric set on one image pair.
+4. An end-to-end runner that writes configuration, snapshots, and tabular results.
+
+All image intensities are expected to be normalized to the ``[0, 1]`` range.
 """
 
 from __future__ import annotations
@@ -29,13 +36,31 @@ from .metric_spec import MetricSpec
 
 @dataclass(frozen=True)
 class AbsoluteResponseConfig:
-    """Parameters controlling the cumulative degradation experiment."""
+    """Parameters controlling the cumulative degradation experiment.
+
+    :param iterations:
+        Number of sequential degradation steps to apply per transform.
+    :type iterations: int
+    :param snapshot_interval:
+        Save one degraded snapshot every ``snapshot_interval`` iterations.
+    :type snapshot_interval: int
+    :param noise_fraction:
+        Fraction of the reference image contrast used as Gaussian noise standard
+        deviation for the ``gauss_noise`` transform.
+    :type noise_fraction: float
+    """
 
     iterations: int = 500
     snapshot_interval: int = 10
     noise_fraction: float = 0.01
 
     def __post_init__(self) -> None:
+        """Validate configuration values after dataclass initialization.
+
+        :raises ValueError:
+            If ``iterations`` is non-positive, ``snapshot_interval`` is
+            non-positive, or ``noise_fraction`` is negative.
+        """
         if self.iterations <= 0:
             raise ValueError("iterations must be positive.")
         if self.snapshot_interval <= 0:
@@ -45,7 +70,15 @@ class AbsoluteResponseConfig:
 
 
 def build_absolute_response_metric_specs() -> dict[str, MetricSpec]:
-    """Build the metrics used to measure response to cumulative degradation."""
+    """Build metric specifications for cumulative degradation analysis.
+
+    The returned mapping is used by :class:`MetricEvaluator` and contains both
+    pixel-level and perceptual metrics configured for single-image evaluation.
+
+    :returns:
+        Mapping from metric name to configured metric specification.
+    :rtype: dict[str, MetricSpec]
+    """
     return {
         "ssim": MetricSpec(
             name="ssim",
@@ -88,7 +121,21 @@ def build_absolute_response_metric_specs() -> dict[str, MetricSpec]:
 
 
 def validate_reference_image(image: np.ndarray) -> np.ndarray:
-    """Return a finite 2D float32 image with intensities in ``[0, 1]``."""
+    """Validate and normalize a reference image view used by degradations.
+
+    The input is converted to ``float32``, squeezed, copied, and validated to be
+    a finite 2D array with values in ``[0, 1]``.
+
+    :param image:
+        Reference image candidate. Extra singleton dimensions are allowed.
+    :type image: numpy.ndarray
+    :returns:
+        A validated 2D ``float32`` copy of the input image.
+    :rtype: numpy.ndarray
+    :raises ValueError:
+        If the image is not 2D after squeeze, contains non-finite values, or has
+        intensities outside ``[0, 1]``.
+    """
     reference = np.asarray(image, dtype=np.float32).squeeze().copy()
     if reference.ndim != 2:
         raise ValueError(f"Expected a 2D image, received shape {reference.shape}.")
@@ -106,7 +153,30 @@ def build_iterative_degradations(
     reference_image: np.ndarray,
     config: AbsoluteResponseConfig,
 ) -> tuple[dict[str, A.Compose], dict[str, float | int | str]]:
-    """Build seeded single-step transforms and their serializable configuration."""
+    """Build deterministic single-step degradations and experiment metadata.
+
+    Each transform is designed to apply one mild degradation step so that running
+    it repeatedly produces a cumulative trajectory. Randomized transforms use fixed
+    seeds for reproducibility.
+
+    :param reference_image:
+        Reference image used for validation and deriving transform parameters such
+        as Gaussian noise level.
+    :type reference_image: numpy.ndarray
+    :param config:
+        Experiment configuration controlling iteration count, snapshot cadence,
+        and relative noise magnitude.
+    :type config: AbsoluteResponseConfig
+    :returns:
+        Two items:
+
+        - Mapping from transform name to one-step Albumentations pipeline.
+        - Serializable settings dictionary suitable for JSON export.
+    :rtype: tuple[dict[str, albumentations.Compose], dict[str, float | int | str]]
+    :raises ValueError:
+        Propagated from :func:`validate_reference_image` when the reference image
+        does not satisfy required constraints.
+    """
     reference = validate_reference_image(reference_image)
     reference_contrast = float(reference.max() - reference.min())
     noise_std = config.noise_fraction * reference_contrast
@@ -165,13 +235,27 @@ def build_iterative_degradations(
 
 
 class MetricEvaluator:
-    """Evaluate a collection of metric specifications on one image pair."""
+    """Evaluate metric specifications on a single degraded/reference image pair.
+
+    Metric callables can be plain functions or ``torch.nn.Module`` instances.
+    Module-based metrics are moved to the selected device and set to eval mode.
+    """
 
     def __init__(
         self,
         metric_specs: Mapping[str, MetricSpec],
         device: torch.device | str | None = None,
     ) -> None:
+        """Initialize the evaluator.
+
+        :param metric_specs:
+            Metric specification mapping keyed by metric name.
+        :type metric_specs: collections.abc.Mapping[str, MetricSpec]
+        :param device:
+            Torch device identifier. If ``None``, CUDA is used when available,
+            otherwise CPU.
+        :type device: torch.device | str | None
+        """
         self.metric_specs = dict(metric_specs)
         self.device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
         for spec in self.metric_specs.values():
@@ -180,6 +264,19 @@ class MetricEvaluator:
                 spec.metric.eval()
 
     def _to_tensor(self, image: np.ndarray, input_channels: int) -> torch.Tensor:
+        """Convert a 2D image to a ``(1, C, H, W)`` float tensor on target device.
+
+        :param image:
+            Input 2D image in ``float32``-compatible format.
+        :type image: numpy.ndarray
+        :param input_channels:
+            Number of channels expected by the metric. For values greater than 1,
+            the single channel is expanded across channels.
+        :type input_channels: int
+        :returns:
+            Batched tensor ready for metric computation.
+        :rtype: torch.Tensor
+        """
         tensor = torch.from_numpy(np.ascontiguousarray(image))[None, None].to(
             device=self.device,
             dtype=torch.float32,
@@ -194,6 +291,20 @@ class MetricEvaluator:
         degraded_image: np.ndarray,
         reference_image: np.ndarray,
     ) -> dict[str, float]:
+        """Compute all configured metrics for one degraded/reference pair.
+
+        :param degraded_image:
+            Degraded image to score against the reference.
+        :type degraded_image: numpy.ndarray
+        :param reference_image:
+            Reference image used as the target.
+        :type reference_image: numpy.ndarray
+        :returns:
+            Mapping from metric name to scalar metric value.
+        :rtype: dict[str, float]
+        :raises ValueError:
+            If any metric returns a non-scalar result after aggregation.
+        """
         scores = {}
         for metric_name, spec in self.metric_specs.items():
             degraded_tensor = self._to_tensor(degraded_image, spec.input_channels)
@@ -217,7 +328,47 @@ def run_iterative_degradation_analysis(
     metric_specs: Mapping[str, MetricSpec] | None = None,
     device: torch.device | str | None = None,
 ) -> pd.DataFrame:
-    """Run cumulative degradations and persist metrics, snapshots, and configuration."""
+    """Run cumulative degradations and persist experiment artifacts.
+
+    For each configured transform, this function repeatedly applies a one-step
+    degradation to the current image, computes all metric values against the
+    original reference, periodically writes snapshots, and saves final results.
+
+    Output artifacts:
+
+    - ``configuration.json``: serializable run settings and derived parameters.
+    - ``reference_iteration_000.tiff``: untouched normalized reference image.
+    - ``<transform>/iteration_XXX.tiff``: periodic degraded snapshots.
+    - ``metric_results.parquet``: long-form table of metric values.
+
+    :param reference_image:
+        Normalized 2D reference image with values in ``[0, 1]``.
+    :type reference_image: numpy.ndarray
+    :param reference_channel:
+        Channel identifier recorded in outputs (for example ``"DNA"``).
+    :type reference_channel: str
+    :param output_dir:
+        Directory where configuration, snapshots, and parquet outputs are written.
+    :type output_dir: str | pathlib.Path
+    :param config:
+        Optional experiment configuration. Defaults to :class:`AbsoluteResponseConfig`.
+    :type config: AbsoluteResponseConfig | None
+    :param metric_specs:
+        Optional metric specification mapping. If omitted, defaults from
+        :func:`build_absolute_response_metric_specs` are used.
+    :type metric_specs: collections.abc.Mapping[str, MetricSpec] | None
+    :param device:
+        Optional torch device for metric evaluation.
+    :type device: torch.device | str | None
+    :returns:
+        Long-form metric table with columns:
+        ``reference_channel``, ``transform_name``, ``iteration``,
+        ``metric_name``, and ``metric_value``.
+    :rtype: pandas.DataFrame
+    :raises ValueError:
+        Propagated from :func:`validate_reference_image` if the reference image
+        is invalid.
+    """
     config = config or AbsoluteResponseConfig()
     reference = validate_reference_image(reference_image)
     transforms, settings = build_iterative_degradations(reference, config)
