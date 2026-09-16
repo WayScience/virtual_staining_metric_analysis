@@ -85,6 +85,7 @@ def write_reference_images(
     path: Path,
     dataset: torch.utils.data.Dataset,
     metadata: pd.DataFrame,
+    dataset_indices: np.ndarray | None = None,
     backend: Literal["lance", "parquet"] = "parquet",
 ) -> None:
     """
@@ -96,6 +97,7 @@ def write_reference_images(
     :param path: Directory where Parquet files will be written.
     :param dataset: PyTorch dataset containing reference images.
     :param metadata: DataFrame containing metadata for the reference images.
+    :param dataset_indices: Dataset positions corresponding to metadata rows.
     """
 
     if not path.exists():
@@ -106,6 +108,19 @@ def write_reference_images(
             f"Length mismatch: metadata has {len(metadata)} items, "
             f"dataset has {len(dataset)} items."
         )
+
+    if dataset_indices is None:
+        dataset_indices = np.arange(len(metadata))
+    else:
+        dataset_indices = np.asarray(dataset_indices)
+        if dataset_indices.ndim != 1 or len(dataset_indices) != len(metadata):
+            raise ValueError(
+                "dataset_indices must be one-dimensional and have the same length as metadata."
+            )
+        if not np.issubdtype(dataset_indices.dtype, np.integer):
+            raise TypeError("dataset_indices must contain integer dataset positions.")
+        if np.any(dataset_indices < 0) or np.any(dataset_indices >= len(dataset)):
+            raise IndexError("dataset_indices contains positions outside the dataset.")
 
     if backend == "parquet":
         write_path = path / PARQUET_WRITE_ROOT
@@ -121,6 +136,7 @@ def write_reference_images(
         schema=_image_record_schema(metadata),
         overwrite=False,
         shardsize=SHARD_SIZE,
+        dataset_name="data.lance",
     ) as writer:
         progress = tqdm(
             enumerate(metadata.to_dict(orient="records")),
@@ -129,7 +145,7 @@ def write_reference_images(
         )
 
         for i, row in progress:
-            sample = dataset[i]
+            sample = dataset[dataset_indices[i]]
             _, target_image = sample
             target_image_np = _tensor_to_numpy(target_image)
 
