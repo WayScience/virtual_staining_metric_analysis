@@ -220,6 +220,7 @@ write_reference_images(
     path=output_dir,
     dataset=cropped_dataset,
     metadata=crop_index_sampled,
+    dataset_indices=crop_index_sampled["dataset_index"].to_numpy(),
     backend="lance",
 )
 
@@ -248,5 +249,6 @@ for chan in channels:
         path=output_dir,
         dataset=cropped_dataset,
         metadata=crop_index_sampled,
+        dataset_indices=crop_index_sampled["dataset_index"].to_numpy(),
         backend="lance",
     )
