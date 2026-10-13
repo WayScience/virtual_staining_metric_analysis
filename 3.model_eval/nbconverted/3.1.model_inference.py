@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 # coding: utf-8
 
-# # 3.1. Generate model predictions iwth brightfield inputs
+# # 3.1. Generate model predictions with brightfield inputs
 # 
 # This notebook loads trained models and generates predictions using input crops written in 3.0.
 # 
@@ -63,7 +63,7 @@ if not LOGGING_ROOT.exists():
 # ## Read in and validate all models
 # Models are trained on HPC with legacy mlflow file based tracking and transferred to local disk.
 # Accessing models with mlflow requires starting a local file based server external of the notebook, which adds complexity. 
-# So here we adpot the approach of manually discovering trained model files to go around external server requirement.
+# So here we adopt the approach of manually discovering trained model files to go around external server requirement.
 
 # In[3]:
 
@@ -121,8 +121,9 @@ for run in runs:
         continue
 
     val_l1 = pd.read_csv(val_l1_file, sep=r'\s+', header=None)
-    best_val_epoch = val_l1[1].idxmin()
+    best_val_epoch = int(val_l1.loc[val_l1[1].idxmin(), 2])
 
+    # Logged steps are zero-based; checkpoint suffixes are one-based.
     best_weight = [
         w for w in weight_files 
         if w.stem.endswith(f"_{best_val_epoch + 1}")
@@ -135,7 +136,7 @@ for run in runs:
         print(f"Warning: Multiple weight files found for best epoch {best_val_epoch + 1} in run {run}. Using the first one.")
 
     # discover the model architecture class path and config
-    model_config = run / "artifacts" / "configs" / f"{model.split(".")[-1]}.json"
+    model_config = run / "artifacts" / "configs" / f"{model.split('.')[-1]}.json"
     if not model_config.exists():
         continue
 
@@ -201,6 +202,11 @@ for run in tqdm(validated_runs, total=len(validated_runs), desc="Loading models"
     density = run["train_density"]
     i = reverse_lookup[(architecture, density)]
 
+    if channel_to_models[channel][i] is not None:
+        raise ValueError(
+            f"Duplicate model for channel={channel}, architecture={architecture}, density={density}."
+        )
+
     model_class_path = run["model"]
     module_name, class_name = model_class_path.rsplit('.', 1)
     module = importlib.import_module(module_name)
@@ -233,7 +239,7 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using {device} with batch size {batch_size}")
 
 
-# In[6]:
+# In[ ]:
 
 
 for chan in target_channels:
