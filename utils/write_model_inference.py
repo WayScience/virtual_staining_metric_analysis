@@ -171,57 +171,75 @@ def write_model_predictions(
         raise ValueError("batch_size must be positive.")
 
     inference_device = torch.device(device or ("cuda:0" if torch.cuda.is_available() else "cpu"))
-    for model in models:
-        model.eval()
-        model.to(inference_device)
+    try:
+        for model in models:
+            model.eval()
+            model.to(inference_device)
 
-    reference_dataset = lance.dataset(reference_lance_dir)
-    fragment_count = len(reference_dataset.get_fragments())
-    output_schema, catalogue_fingerprint = _model_prediction_record_schema(
-        reference_dataset.schema,
-        model_catalogue,
-    )
+        reference_dataset = lance.dataset(reference_lance_dir)
+        fragment_count = len(reference_dataset.get_fragments())
+        output_schema, catalogue_fingerprint = _model_prediction_record_schema(
+            reference_dataset.schema,
+            model_catalogue,
+        )
 
-    output_dir.mkdir(parents=True, exist_ok=True)
-    progress = tqdm(
-        iter_lance_fragments(reference_lance_dir),
-        total=fragment_count,
-        desc="Writing model predictions",
-    )
-
-    with LanceWriter(
-        output_dir=output_dir,
-        schema=output_schema,
-        overwrite=overwrite,
-        shardsize=SHARD_SIZE,
-        dataset_name="data.lance",
-    ) as writer:
-        for _, _, reference_table in progress:
-            references = reference_table.to_pylist()
-            for start in range(0, len(references), batch_size):
-                batch_records = references[start : start + batch_size]
-                batch_images = [
-                    decode_pixel_record(record, expected_axes="YX")[0] for record in batch_records
-                ]
-                prediction_stacks = _prediction_batch(
-                    batch_images,
-                    models,
-                    inference_device,
-                )
-
-                for reference, prediction_stack in zip(
-                    batch_records,
-                    prediction_stacks,
-                    strict=True,
+        output_dir.mkdir(parents=True, exist_ok=True)
+        output_lance_dir = output_dir / "data.lance"
+        if output_lance_dir.exists() and not overwrite:
+            existing_dataset = lance.dataset(output_lance_dir)
+            for batch in existing_dataset.to_batches(columns=["model_catalogue_fingerprint"]):
+                if any(
+                    fingerprint != catalogue_fingerprint
+                    for fingerprint in batch.column(0).to_pylist()
                 ):
-                    writer.add_row(
-                        {
-                            **reference,
-                            "model_catalogue_fingerprint": catalogue_fingerprint,
-                            **encode_pixels(
-                                prediction_stack,
-                                axes="MYX",
-                                require_finite=True,
-                            ),
-                        }
+                    raise ValueError(
+                        "Existing model_catalogue_fingerprint values do not match "
+                        "the requested model catalogue."
                     )
+
+        progress = tqdm(
+            iter_lance_fragments(reference_lance_dir),
+            total=fragment_count,
+            desc="Writing model predictions",
+        )
+
+        with LanceWriter(
+            output_dir=output_dir,
+            schema=output_schema,
+            overwrite=overwrite,
+            shardsize=SHARD_SIZE,
+            dataset_name="data.lance",
+        ) as writer:
+            for _, _, reference_table in progress:
+                references = reference_table.to_pylist()
+                for start in range(0, len(references), batch_size):
+                    batch_records = references[start : start + batch_size]
+                    batch_images = [
+                        decode_pixel_record(record, expected_axes="YX")[0]
+                        for record in batch_records
+                    ]
+                    prediction_stacks = _prediction_batch(
+                        batch_images,
+                        models,
+                        inference_device,
+                    )
+
+                    for reference, prediction_stack in zip(
+                        batch_records,
+                        prediction_stacks,
+                        strict=True,
+                    ):
+                        writer.add_row(
+                            {
+                                **reference,
+                                "model_catalogue_fingerprint": catalogue_fingerprint,
+                                **encode_pixels(
+                                    prediction_stack,
+                                    axes="MYX",
+                                    require_finite=True,
+                                ),
+                            }
+                        )
+    finally:
+        for model in models:
+            model.to("cpu")
