@@ -7,10 +7,11 @@
 # 
 # Outputs are written in the same format as the inputs grouping related predictions (from the same input) together as a row entry.
 
-# In[1]:
+# In[ ]:
 
 
 from pathlib import Path
+import hashlib
 import json
 import importlib
 from itertools import product
@@ -26,7 +27,7 @@ from utils.validate_config import (
 from utils.write_model_inference import write_model_predictions
 
 
-# In[2]:
+# In[ ]:
 
 
 degradation_path = Path(".").resolve().parent / "1.image_degradation_simulation"
@@ -65,7 +66,7 @@ if not LOGGING_ROOT.exists():
 # Accessing models with mlflow requires starting a local file based server external of the notebook, which adds complexity. 
 # So here we adopt the approach of manually discovering trained model files to go around external server requirement.
 
-# In[3]:
+# In[ ]:
 
 
 # Assumes flat directory structure under LOGGING_ROOT for runs
@@ -151,6 +152,7 @@ for run in runs:
         "model": model,
         "config": model_config_data,
         "best_weight": best_weight[0],
+        "checkpoint_sha256": hashlib.sha256(best_weight[0].read_bytes()).hexdigest(),
     })
 
 print(f"Found {len(validated_runs)} validated runs.")
@@ -163,7 +165,7 @@ print(f"Found {len(validated_runs)} validated runs.")
 # The action of loading everything into RAM may seem demanding but because all models here are convolutional neural networks and quite lightweight all 75 occupies roughly 13GB of RAM. 
 # This earlier memory usage helps eliminate the need for repeated model reads from disk during prediction.
 
-# In[4]:
+# In[ ]:
 
 
 target_channels = sorted(
@@ -190,6 +192,10 @@ model_catalogue = pd.DataFrame(
 )
 
 channel_to_models = {
+    chan: [None] * len(model_catalogue)
+    for chan in target_channels
+}
+channel_to_checkpoint_hashes = {
     chan: [None] * len(model_catalogue)
     for chan in target_channels
 }
@@ -220,6 +226,7 @@ for run in tqdm(validated_runs, total=len(validated_runs), desc="Loading models"
     model_instance.eval()
 
     channel_to_models[channel][i] = model_instance
+    channel_to_checkpoint_hashes[channel][i] = run["checkpoint_sha256"]
 
 if any(model is None for models in channel_to_models.values() for model in models):
     print("Warning: Some models are missing for certain architecture-density combinations.")
@@ -231,7 +238,7 @@ model_catalogue.to_csv(pred_out_dir / "model_catalogue.csv", index=False)
 # ## Prediction configuration
 # Adjust to fit on hardware
 
-# In[5]:
+# In[ ]:
 
 
 batch_size = 32
@@ -245,6 +252,8 @@ print(f"Using {device} with batch size {batch_size}")
 for chan in target_channels:
 
     model_list = channel_to_models[chan]
+    catalogue_for_output = model_catalogue.copy()
+    catalogue_for_output["checkpoint_sha256"] = channel_to_checkpoint_hashes[chan]
 
     print(chan)
 
@@ -262,7 +271,7 @@ for chan in target_channels:
 
     write_model_predictions(
         models=model_list,
-        model_catalogue=model_catalogue,
+        model_catalogue=catalogue_for_output,
         output_dir=_output_dir,
         reference_lance_dir=input_dir / "data.lance",
         device=device,
