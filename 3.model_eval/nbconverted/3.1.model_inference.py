@@ -7,7 +7,7 @@
 # 
 # Outputs are written in the same format as the inputs grouping related predictions (from the same input) together as a row entry.
 
-# In[ ]:
+# In[1]:
 
 
 from pathlib import Path
@@ -27,7 +27,7 @@ from utils.validate_config import (
 from utils.write_model_inference import write_model_predictions
 
 
-# In[ ]:
+# In[2]:
 
 
 degradation_path = Path(".").resolve().parent / "1.image_degradation_simulation"
@@ -66,7 +66,7 @@ if not LOGGING_ROOT.exists():
 # Accessing models with mlflow requires starting a local file based server external of the notebook, which adds complexity. 
 # So here we adopt the approach of manually discovering trained model files to go around external server requirement.
 
-# In[ ]:
+# In[3]:
 
 
 # Assumes flat directory structure under LOGGING_ROOT for runs
@@ -165,7 +165,7 @@ print(f"Found {len(validated_runs)} validated runs.")
 # The action of loading everything into RAM may seem demanding but because all models here are convolutional neural networks and quite lightweight all 75 occupies roughly 13GB of RAM. 
 # This earlier memory usage helps eliminate the need for repeated model reads from disk during prediction.
 
-# In[ ]:
+# In[4]:
 
 
 target_channels = sorted(
@@ -199,6 +199,14 @@ channel_to_checkpoint_hashes = {
     chan: [None] * len(model_catalogue)
     for chan in target_channels
 }
+channel_to_model_classes = {
+    chan: [None] * len(model_catalogue)
+    for chan in target_channels
+}
+channel_to_model_init_configs = {
+    chan: [None] * len(model_catalogue)
+    for chan in target_channels
+}
 
 # While organizing the models by channel, architecture, and density, load them
 for run in tqdm(validated_runs, total=len(validated_runs), desc="Loading models"):
@@ -221,12 +229,16 @@ for run in tqdm(validated_runs, total=len(validated_runs), desc="Loading models"
     if class_name == "ConvNeXtUNet":
         run["config"]["init"] = {**run["config"]["init"], "_pixel_shuffle_preserve_channels": True}
 
+    # Snapshot the effective constructor arguments before instantiation can mutate them.
+    model_init_config = json.dumps(run["config"]["init"], sort_keys=True)
     model_instance = model_class(**run["config"]["init"])
     model_instance.load_state_dict(torch.load(run["best_weight"], map_location=torch.device('cpu')))
     model_instance.eval()
 
     channel_to_models[channel][i] = model_instance
     channel_to_checkpoint_hashes[channel][i] = run["checkpoint_sha256"]
+    channel_to_model_classes[channel][i] = f"{model_class.__module__}.{model_class.__qualname__}"
+    channel_to_model_init_configs[channel][i] = model_init_config
 
 if any(model is None for models in channel_to_models.values() for model in models):
     print("Warning: Some models are missing for certain architecture-density combinations.")
@@ -238,7 +250,7 @@ model_catalogue.to_csv(pred_out_dir / "model_catalogue.csv", index=False)
 # ## Prediction configuration
 # Adjust to fit on hardware
 
-# In[ ]:
+# In[5]:
 
 
 batch_size = 32
@@ -254,6 +266,8 @@ for chan in target_channels:
     model_list = channel_to_models[chan]
     catalogue_for_output = model_catalogue.copy()
     catalogue_for_output["checkpoint_sha256"] = channel_to_checkpoint_hashes[chan]
+    catalogue_for_output["model_class"] = channel_to_model_classes[chan]
+    catalogue_for_output["model_init_config"] = channel_to_model_init_configs[chan]
 
     print(chan)
 
