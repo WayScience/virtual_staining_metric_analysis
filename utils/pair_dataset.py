@@ -81,6 +81,7 @@ def _scanner_rows(
     fragment: lance.LanceFragment,
     *,
     columns: list[str] | None,
+    row_filter: str | None,
     batch_size: int,
     batch_readahead: int,
 ) -> Iterator[dict[str, Any]]:
@@ -93,6 +94,7 @@ def _scanner_rows(
     batches = dataset.scanner(
         columns=columns,
         fragments=[fragment],
+        filter=row_filter,
         batch_size=batch_size,
         batch_readahead=batch_readahead,
         fragment_readahead=1,
@@ -132,6 +134,8 @@ class PairedLanceImageDataset(IterableDataset[PairedLanceSample]):
         scan_batch_size: int = 8,
         batch_readahead: int = 2,
         validate_pairing: bool = True,
+        pair_channel: tuple[str, str] | None = None,
+        row_filter: str | None = None,
     ) -> None:
         super().__init__()
 
@@ -149,6 +153,8 @@ class PairedLanceImageDataset(IterableDataset[PairedLanceSample]):
         self.scan_batch_size = scan_batch_size
         self.batch_readahead = batch_readahead
         self.validate_pairing = validate_pairing
+        self.pair_channel = pair_channel
+        self.row_filter = row_filter
 
         self.reference_columns = _projected_columns(
             reference_metadata_columns,
@@ -203,6 +209,7 @@ class PairedLanceImageDataset(IterableDataset[PairedLanceSample]):
                 reference_dataset,
                 reference_fragment,
                 columns=self.reference_columns,
+                row_filter=self.row_filter,
                 batch_size=self.scan_batch_size,
                 batch_readahead=self.batch_readahead,
             )
@@ -210,6 +217,7 @@ class PairedLanceImageDataset(IterableDataset[PairedLanceSample]):
                 degradation_dataset,
                 degradation_fragment,
                 columns=self.degradation_columns,
+                row_filter=self.row_filter,
                 batch_size=self.scan_batch_size,
                 batch_readahead=self.batch_readahead,
             )
@@ -240,8 +248,16 @@ class PairedLanceImageDataset(IterableDataset[PairedLanceSample]):
                 if self.validate_pairing:
                     reference_key = reference_record.get(self.pair_key)
                     degradation_key = degradation_record.get(self.pair_key)
+                    if self.pair_channel is not None:
+                        if self.pair_channel[0] not in reference_key:
+                            raise ValueError(
+                                f"Reference key {reference_key!r} does not contain expected channel {self.pair_channel[0]!r}."
+                            )
+                        _ref = reference_key.replace(self.pair_channel[0], self.pair_channel[1])
+                    else:
+                        _ref = reference_key
 
-                    if reference_key != degradation_key:
+                    if _ref != degradation_key:
                         raise ValueError(
                             "Reference/degradation record mismatch at "
                             f"fragment position {fragment_position}, "
