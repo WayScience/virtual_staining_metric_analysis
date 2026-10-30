@@ -191,7 +191,7 @@ plt.show()
 # 
 # The writer stores one self-describing row per crop/channel under `reference_records/`. Each row contains a stable `record_id`, the normalized float32 `YX` pixel buffer, its shape and dtype contract, source-image provenance, crop geometry, and all image-level metadata. Bounded Parquet shards are written through validated temporary files and valid completed shards are reused on rerun. Reference and future degraded-stack datasets use the same record envelope and map through the same `record_id`.
 
-# In[6]:
+# In[ ]:
 
 
 write_degraded_images(
@@ -199,4 +199,5 @@ write_degraded_images(
     specs=degradation_specs,
     output_dir=degrade_patch_output_dir,
     base_seed=42,
+    dataset_name="data.lance",
 )

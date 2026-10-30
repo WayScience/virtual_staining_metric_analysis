@@ -101,6 +101,7 @@ def write_degraded_images(
     overwrite: bool = False,
     reference_shards: list[Path] | None = None,
     reference_lance_dir: Path | None = None,
+    dataset_name: str | None = "data.lance"
 ) -> None:
     """
     Write degraded images to Parquet files based on reference shards and degradation specs.
@@ -147,6 +148,7 @@ def write_degraded_images(
         schema=None,
         overwrite=overwrite,
         shardsize=SHARD_SIZE,
+        dataset_name=dataset_name,
     ) as writer:
         fingerprint = _fingerprint_degradation_specs(specs)
 
