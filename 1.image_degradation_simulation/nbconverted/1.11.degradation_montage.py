@@ -83,7 +83,7 @@ for path in (reference_uri, degraded_uri, catalog_path):
     if not path.exists():
         raise FileNotFoundError(f"Required input missing: {path}. Run notebooks 1.2–1.3 first.")
 
-degradation_catalog = pd.read_csv(catalog_path).sort_values("page_index")
+degradation_catalog = pd.read_csv(catalog_path, float_precision="round_trip").sort_values("page_index")
 required_columns = {
     "page_index", "transform_name", "transform_level", "parameter_name", "parameter_value"
 }
@@ -181,6 +181,20 @@ degraded_stack, degradation_metadata = decode_pixel_record(
 for key in reference_metadata.keys() & degradation_metadata.keys():
     if reference_metadata[key] != degradation_metadata[key]:
         raise ValueError(f"Reference/stack provenance differs for {key!r}; check regenerated records.")
+# Confirm the catalog represents the same specifications as the stored stack.
+from utils.degrade_spec import build_degradation_specs, specs_to_frame
+from utils.write_degrade_image import _fingerprint_degradation_specs
+
+degradation_specs = build_degradation_specs()
+expected_catalog = specs_to_frame(degradation_specs).drop(
+    columns=["albumentations_version", "opencv_version"]
+)
+pd.testing.assert_frame_equal(
+    degradation_catalog[expected_catalog.columns].reset_index(drop=True).fillna(""),
+    expected_catalog, check_dtype=False, check_exact=True,
+)
+if degradation_metadata.get("spec_fingerprint") != _fingerprint_degradation_specs(degradation_specs):
+    raise ValueError("Degraded record specifications differ from the catalog; regenerate matched inputs.")
 if degraded_stack.shape != (len(degradation_catalog), *reference_image.shape):
     raise ValueError(
         f"Stack shape {degraded_stack.shape} disagrees with the catalog/reference "
@@ -202,7 +216,7 @@ display(pd.Series({
 # 
 # Use catalog page indexes to place each stored variant in the correct row and column. The reference is repeated to make within-family comparisons easy; one calibrated scale bar applies to all panels. Saved filenames include the selected record and scaling mode.
 
-# In[6]:
+# In[7]:
 
 
 # Reference scaling preserves intensity differences; dynamic scaling is per panel.
@@ -271,4 +285,3 @@ if save_figure:
             dpi=200, bbox_inches="tight", pad_inches=0.02,
         )
 plt.show()
-
