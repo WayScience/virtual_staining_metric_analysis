@@ -76,7 +76,7 @@ Foreground SSIM and PSNR reduces the seeding-density burden relative to whole-im
 The cumulative-degradation experiment highlights early flattening of metric responses, particularly for blur and erosion. Once a response flattens, additional transformations may produce little score change. Viewing the trajectory alongside image snapshots helps distinguish loss of metric sensitivity from an image that has itself stopped changing appreciably.
 
 ![Scores do not flatten prematurely against certain degradations](results/metric_absolute_response_analysis/OrigER/erode_100_it_response_montage.png)
-> Against degradations such as darkening gamma correction where the dark side of the dynamically range of the image gets increasingly compressed, and information is systemically lost, metrics tend to capture continued degradation and flatten only when the image is essentially blank. 
+> Against degradations such as erosion that lessens objects (cell) gradually, where information is systemically lost, metrics tend to capture continued degradation and flatten only when the image is essentially blank. 
 
 ![Scores do flatten prematurely against other degradations](results/metric_absolute_response_analysis/OrigER/gaussian_blur_100_it_response_montage.png)
 > Against degradations such as blur, high frequency information such as texture gets lost but low frequency signal such as object location stays intact, metrics flatten quite early on and cease to respond to continued blurring.  
