@@ -17,16 +17,21 @@ import tifffile as tiff
 
 def load_absolute_response_artifacts(
     analysis_output_dir: str | Path,
+    *,
+    results_output_dir: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Load and validate the persisted analysis tables and configuration."""
+    """Load analysis artifacts, optionally reading normalized metrics from results_output_dir."""
     analysis_output_dir = Path(analysis_output_dir)
+    results_output_dir = (
+        analysis_output_dir if results_output_dir is None else Path(results_output_dir)
+    )
     artifact_paths = {
         "raw metrics": analysis_output_dir / "metric_results.parquet",
-        "normalized metrics": analysis_output_dir / "normalized_metric_results.parquet",
+        "normalized metrics": results_output_dir / "normalized_metric_results.parquet",
         "configuration": analysis_output_dir / "configuration.json",
         "reference image": analysis_output_dir / "reference_iteration_000.tiff",
     }
-    missing = [label for label, path in artifact_paths.items() if not path.is_file()]
+    missing = [f"{label}: {path}" for label, path in artifact_paths.items() if not path.is_file()]
     if missing:
         raise FileNotFoundError(
             f"Missing metric absolute response artifacts in {analysis_output_dir}: "

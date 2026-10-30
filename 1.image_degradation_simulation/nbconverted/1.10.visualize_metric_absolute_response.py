@@ -8,7 +8,7 @@
 # 2. Compares normalized metric trajectories, observed score ranges, and first-step responses across degradation types.
 # 3. Relates saved image snapshots to metric response curves for visual interpretation.
 
-# In[ ]:
+# In[1]:
 
 
 from pathlib import Path
@@ -43,22 +43,25 @@ reference_channel = target_channels[0]
 analysis_output_dir = (
     analysis_dir / "metric_absolute_response_analysis" / reference_channel
 )
+results_output_dir = Path("results") / "metric_absolute_response_analysis"
 plot_output_dir = (
     Path("results") / "metric_absolute_response_analysis" / reference_channel
 )
 
 metric_results, normalized_metric_results, response_configuration = (
-    load_absolute_response_artifacts(analysis_output_dir)
+    load_absolute_response_artifacts(
+        analysis_output_dir=analysis_output_dir, 
+        results_output_dir=results_output_dir)
 )
 
 
-# In[ ]:
+# In[3]:
 
 
 normalized_metric_results.head()
 
 
-# In[ ]:
+# In[4]:
 
 
 {
@@ -68,7 +71,7 @@ normalized_metric_results.head()
 }
 
 
-# In[ ]:
+# In[5]:
 
 
 degradation_plot_config = load_degradation_plot_config("degradation_plot_config.yaml")
@@ -88,7 +91,7 @@ if unconfigured_transforms:
     )
 
 
-# In[ ]:
+# In[6]:
 
 
 plot_normalized_trajectories(
@@ -102,7 +105,7 @@ plot_normalized_trajectories(
 )
 
 
-# In[ ]:
+# In[7]:
 
 
 _, range_summary = plot_normalized_ranges(
@@ -117,7 +120,7 @@ _, range_summary = plot_normalized_ranges(
 range_summary
 
 
-# In[ ]:
+# In[8]:
 
 
 _, step_one_comparison = plot_initial_response_vs_mae(
@@ -134,7 +137,7 @@ step_one_comparison.sort_values(
 )
 
 
-# In[ ]:
+# In[9]:
 
 
 snapshot_limit = min(100, response_configuration["iterations"])
