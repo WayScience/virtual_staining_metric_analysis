@@ -12,7 +12,7 @@ It addresses the need to understand whether metrics developed for natural images
 By jointly simulating image degradation and biologically driven distribution shifts in data, the analysis quantifies how metric scores reflect true losses in virtual-staining fidelity and gets confounded by the underlying content of the evaluated images.
 
 ## Dataset
-We use a Cell Painting dataset [PedCP90]([PedCP90](https://github.com/WayScience/pedcp90)), consisting of 18 unperturbed pediatric cancer cell lines plated under 5 different levels of seeding density.
+We use a Cell Painting dataset [PedCP90](https://github.com/WayScience/pedcp90), consisting of 18 unperturbed pediatric cancer cell lines plated under 5 different levels of seeding density.
 
 ## Approach
 
