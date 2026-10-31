@@ -14,6 +14,8 @@ import numpy as np
 import pandas as pd
 import tifffile as tiff
 
+from utils.metric_normalization import normalize_metric_results
+
 
 def load_absolute_response_artifacts(
     analysis_output_dir: str | Path,
@@ -43,9 +45,13 @@ def load_absolute_response_artifacts(
     run_keys = ["reference_channel", "transform_name", "iteration", "metric_name"]
     run_columns = [*run_keys, "metric_value"]
     try:
+        expected_normalized_results = normalize_metric_results(raw_results)
+        normalized_columns = [*run_columns, "normalized_metric_value"]
         pd.testing.assert_frame_equal(
-            raw_results[run_columns].sort_values(run_keys).reset_index(drop=True),
-            normalized_results[run_columns].sort_values(run_keys).reset_index(drop=True),
+            expected_normalized_results[normalized_columns]
+            .sort_values(run_keys)
+            .reset_index(drop=True),
+            normalized_results[normalized_columns].sort_values(run_keys).reset_index(drop=True),
             check_dtype=False,
             check_categorical=False,
             check_exact=True,
