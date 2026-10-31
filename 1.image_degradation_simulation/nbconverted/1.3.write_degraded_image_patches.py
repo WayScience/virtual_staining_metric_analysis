@@ -199,4 +199,5 @@ write_degraded_images(
     specs=degradation_specs,
     output_dir=degrade_patch_output_dir,
     base_seed=42,
+    dataset_name="data.lance",
 )
