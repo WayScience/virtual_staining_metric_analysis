@@ -103,6 +103,6 @@ The montage notebooks read existing artifacts rather than regenerate images or r
 
 This study characterizes limitations of current image quality metrics in terms of sensitivity to degradation and their interpretation in context of microscopy image reconstruction. 
 We do **not** establish, yet, that using these metrics for virtual staining model selection or training causes incorrect biological conclusions in direct applications such as substituting virtual staining for measured Cell Painting in drug screens. 
-Nor is this study any form of benchmark comparing the performance published virtual-staining architectures.
+Nor is this study any form of benchmark comparing the performance of published virtual-staining architectures.
 
-Next steps are to complete the prediction analyses and test whether metric-based virtual staining model selection yields predictions that preserves biologically relevant feature space structure, and to what extent uexperimental findings across unseen perturbations remain valid.
+Next steps are to complete the prediction analyses and test whether metric-based virtual staining model selection yields predictions that preserve biologically relevant feature space structure, and to what extent these experimental findings across unseen perturbations remain valid.
