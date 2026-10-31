@@ -69,8 +69,8 @@ The [radar summary by degradation](results/variance_partition_analysis/plots/ano
 ![Cell-line and seeding-density burden across metrics and degradation families](results/bio_covariate_nested_regression/nested_r2_scatter.png)
 > This scatter plot visualizes the two properties: **sensitivity to degradation** (x-axis, higher is more sensitive) and **stability across biological and imaging contexts**(y-axis, lower is more stable) of all metrics against all degradations.
 
-There is no single metric that is optimal for all degradation types investigated here, but the analysis do indicates DISTS as being the more favorable metric with consistently good balance between sensitivity and stability across degradations.
-Foreground SSIM and PSNR reduces the seeding-density burden relative to whole-image counterparts, suggesting that restricting evaluation to cellular regions can improve comparability when the amount of background changes.
+There is no single metric that is optimal for all degradation types investigated here, but the analysis indicates that DISTS offers a favorable balance between sensitivity and stability across degradations.
+Foreground SSIM and PSNR reduce the seeding-density burden relative to whole-image counterparts, suggesting that restricting evaluation to cellular regions can improve comparability when the amount of background changes.
 
 ### Scores can flatten despite continued degradation
 
