@@ -31,6 +31,7 @@ class Writer:
         overwrite: bool = False,
         compression: str = "zstd",
         shardsize: int = 128,
+        dataset_name: str | None = None,
     ):
         """
         Initialize the Writer with the output directory, schema, and configuration options.
@@ -42,6 +43,7 @@ class Writer:
         :param shardsize: Maximum number of rows to accumulate before writing a
             shard. A structural schema change may flush a smaller shard.
             Do not change this value across resuming runs, as it will affect the shard file names and overwrite behavior.
+        :param dataset_name: Optional name for the dataset, does not do anything, for writer class api compatibility.
         """
         self.output_dir = output_dir
         if not output_dir.exists():
