@@ -20,7 +20,7 @@ def load_absolute_response_artifacts(
     *,
     results_output_dir: str | Path | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, Any]]:
-    """Load analysis artifacts, optionally reading normalized metrics from results_output_dir."""
+    """Load artifacts and reject normalized metrics that do not match the raw analysis run."""
     analysis_output_dir = Path(analysis_output_dir)
     results_output_dir = (
         analysis_output_dir if results_output_dir is None else Path(results_output_dir)
@@ -40,6 +40,21 @@ def load_absolute_response_artifacts(
 
     raw_results = pd.read_parquet(artifact_paths["raw metrics"])
     normalized_results = pd.read_parquet(artifact_paths["normalized metrics"])
+    run_keys = ["reference_channel", "transform_name", "iteration", "metric_name"]
+    run_columns = [*run_keys, "metric_value"]
+    try:
+        pd.testing.assert_frame_equal(
+            raw_results[run_columns].sort_values(run_keys).reset_index(drop=True),
+            normalized_results[run_columns].sort_values(run_keys).reset_index(drop=True),
+            check_dtype=False,
+            check_categorical=False,
+            check_exact=True,
+        )
+    except (AssertionError, KeyError, ValueError) as error:
+        raise ValueError(
+            "Normalized metrics do not match the raw results for the loaded analysis run. "
+            "Run notebook 1.9 for the configured reference channel before plotting."
+        ) from error
     with artifact_paths["configuration"].open() as config_file:
         configuration = json.load(config_file)
     return raw_results, normalized_results, configuration

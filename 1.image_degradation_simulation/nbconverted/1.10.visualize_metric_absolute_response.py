@@ -29,7 +29,7 @@ from utils.validate_config import (
 )
 
 
-# In[ ]:
+# In[2]:
 
 
 config = load_yaml_config("degradation_config.yaml")
@@ -160,4 +160,3 @@ for transform_name in transform_order:
         transform_label=transform_labels[transform_name],
         output_path=plot_output_dir / f"{transform_name}_100_it_response_montage.png",
     )
-
