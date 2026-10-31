@@ -167,11 +167,11 @@ class PairedLanceImageDataset(IterableDataset[PairedLanceSample]):
 
     def __len__(self) -> int:
         """
-        Return the total reference record count.
+        Return the reference record count selected by row_filter.
 
         The Lance handle is temporary and is not retained across processes.
         """
-        return lance.dataset(self.reference_uri).count_rows()
+        return lance.dataset(self.reference_uri).count_rows(filter=self.row_filter)
 
     def __iter__(self) -> Iterator[PairedLanceSample]:
         # Open the datasets independently in each DataLoader worker.
