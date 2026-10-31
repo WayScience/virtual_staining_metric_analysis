@@ -1,14 +1,14 @@
 # Image quality assessment metrics vs. simulated image degradation
 
-How much does an image quality score tell us about reconstruction quality, and how much does it reflect the cells being imaged? 
+How much does an image quality score tell us about reconstruction quality, and how much does it reflect the cells being imaged?
 
 ## Goals
 
-This sub-analysis generates the PedCP90Sim dataset from [PedCP90](https://github.com/WayScience/pedcp90), using controlled degradations of Cell Painting images.
-The PedCP90Sim dataset is then used to evaluate seven full-reference image quality assessment metrics, commonly used in optimization or selection of virtual staining models. 
-We examine two complementary properties of the metrics: **sensitivity to degradation** and **stability across biological and imaging contexts**. 
+Here, we generate the PedCP90Sim dataset from [PedCP90](https://github.com/WayScience/pedcp90), using controlled degradations of Cell Painting images.
+We then use PedCP90Sim to evaluate seven full-reference image quality assessment metrics, commonly used in optimization or selection of virtual staining models.
+We examine two complementary properties of the metrics: **sensitivity to degradation** and **stability across biological and imaging contexts**.
 
-It addresses the need to understand whether metrics developed for natural images remain sensitive and interpretable in microscopy applications, where changes in cell line, treatment, experimental procedure, and image acquisition may alter image content independently of reconstruction quality.
+This approach addresses the need to understand whether metrics developed for natural images remain sensitive and interpretable in microscopy applications, where changes in cell line, treatment, experimental procedure, and image acquisition may alter image content independently of reconstruction quality.
 By jointly simulating image degradation and biologically driven distribution shifts in data, the analysis quantifies how metric scores reflect true losses in virtual-staining fidelity and gets confounded by the underlying content of the evaluated images.
 
 ## Dataset
@@ -54,10 +54,11 @@ This allows us to quantify the absolute and relative metric sensitivity to degra
 
 ### Same degradation, different scores across biology and imaging context
 
-Metric scores depend on cell line, seeding density, and fluorescence channel as well as degradation severity. Consequently, a score difference between biological conditions cannot automatically be interpreted as a difference in reconstruction quality. 
+Metric scores depend on cell line, seeding density, and fluorescence channel as well as degradation severity.
+Consequently, a score difference between biological conditions cannot automatically be interpreted as a difference in reconstruction quality.
 The variance analysis also considers severity-by-context interactions, which distinguish context-dependent responses from simple shifts in baseline scores.
 
-![Metric score variation associated with degradation severity, biological context, channel, and their interactions.](results/variance_partition_analysis/plots/anova.png)
+![Metric score variation associated with degradation severity, biological context, channel, and their interactions](results/variance_partition_analysis/plots/anova.png)
 > Metric major visualization showing detailed metric variance decomposition results attributing metric variation to degradation, biology and technical variations. Every row is the result of a metric-degradation combination.
 
 The [radar summary by degradation](results/variance_partition_analysis/plots/anova_radar_by_degradation.png) provides a degradation-major alternative visualization to highlight common strengths and weakness of metrics.
@@ -65,18 +66,20 @@ The [radar summary by degradation](results/variance_partition_analysis/plots/ano
 
 ### Sensitivity (to degradation) and stability across biology are different strengths
 
-![Cell-line and seeding-density burden across metrics and degradation families.](results/bio_covariate_nested_regression/nested_r2_scatter.png) 
-> This scatter plot visualizes the two properties: **sensitivity to degradation** (x-axis, higher is more sensitive) and **stability across biological and imaging contexts**(y-axis, lower is more stable) of all metrics against all degradations. 
+![Cell-line and seeding-density burden across metrics and degradation families](results/bio_covariate_nested_regression/nested_r2_scatter.png)
+> This scatter plot visualizes the two properties: **sensitivity to degradation** (x-axis, higher is more sensitive) and **stability across biological and imaging contexts**(y-axis, lower is more stable) of all metrics against all degradations.
 
 There is no single metric that is optimal for all degradation types investigated here, but the analysis do indicates DISTS as being the more favorable metric with consistently good balance between sensitivity and stability across degradations.
-Foreground SSIM and PSNR reduces the seeding-density burden relative to whole-image counterparts, suggesting that restricting evaluation to cellular regions can improve comparability when the amount of background changes. 
+Foreground SSIM and PSNR reduces the seeding-density burden relative to whole-image counterparts, suggesting that restricting evaluation to cellular regions can improve comparability when the amount of background changes.
 
 ### Scores can flatten despite continued degradation
 
-The cumulative-degradation experiment highlights early flattening of metric responses, particularly for blur and erosion. Once a response flattens, additional transformations may produce little score change. Viewing the trajectory alongside image snapshots helps distinguish loss of metric sensitivity from an image that has itself stopped changing appreciably.
+The cumulative-degradation experiment highlights early flattening of metric responses, particularly for blur and erosion.
+Once a response flattens, additional transformations may produce very little score change and cease to alert researchers of the worsening abnormality.
+Viewing the trajectory alongside image snapshots helps distinguish loss of metric sensitivity from an image that has itself stopped changing appreciably.
 
 ![Scores do not flatten prematurely against certain degradations](results/metric_absolute_response_analysis/OrigER/erode_100_it_response_montage.png)
-> Against degradations such as erosion that lessens objects (cell) gradually, where information is systemically lost, metrics tend to capture continued degradation and flatten only when the image is essentially blank. 
+> Against degradations such as erosion that lessens objects (cell) gradually, where information is systemically lost, metrics tend to capture continued degradation and flatten only when the image is essentially blank.
 
 ![Scores do flatten prematurely against other degradations](results/metric_absolute_response_analysis/OrigER/gaussian_blur_100_it_response_montage.png)
-> Against degradations such as blur, high frequency information such as texture gets lost but low frequency signal such as object location stays intact, metrics flatten quite early on and cease to respond to continued blurring.  
+> Against degradations such as blur, high frequency information such as texture gets lost but low frequency signal such as object location stays intact, metrics flatten quite early on and cease to respond to continued blurring.
