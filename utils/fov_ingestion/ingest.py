@@ -152,6 +152,50 @@ def read_2d(path):
     return arr
 
 
+def read_outline(path):
+    """Read binary outlines as YX bool, including colored RGB exports.
+
+    RGB channels must be empty or encode the same boundary. Alpha is ignored.
+    Non-RGB stacks are accepted only when all pages are exact duplicates.
+    """
+    with tifffile.TiffFile(path) as tif:
+        arr = tif.asarray()
+        axes = tif.series[0].axes
+        is_rgb = tif.pages[0].photometric == 2
+    if arr.dtype.kind not in 'buif' or not np.isfinite(arr).all():
+        raise ValueError(f'Unsupported or nonfinite outline pixels: {path}')
+    if is_rgb:
+        if arr.ndim != 3 or axes not in ('YXS', 'SYX'):
+            raise ValueError(f'Unsupported RGB outline layout {axes} {arr.shape}: {path}')
+        planes = np.moveaxis(arr, axes.index('S'), 0)
+        if planes.shape[0] not in (3, 4):
+            raise ValueError(f'Expected RGB or RGBA outline: {path}')
+        planes = planes[:3]  # An opaque alpha channel is not a boundary.
+    else:
+        arr = np.squeeze(arr)
+        if arr.ndim == 3 and axes.endswith('YX'):
+            if not np.all(arr == arr[0]):
+                raise ValueError(f'Outline pages differ; expected one 2D boundary: {path}')
+            arr = arr[0]
+        if arr.ndim != 2:
+            raise ValueError(f'Unsupported outline layout {axes} {arr.shape}: {path}')
+        planes = arr[None, ...]
+    boundary = np.zeros(planes.shape[1:], dtype=bool)
+    found = False
+    for plane in planes:
+        values = np.unique(plane)
+        if np.any(values < 0) or np.count_nonzero(values) > 1:
+            raise ValueError(f'Expected zero background and one positive outline value: {path}')
+        mask = plane > 0
+        if not mask.any():
+            continue
+        if found and not np.array_equal(boundary, mask):
+            raise ValueError(f'RGB outline channels contain different boundaries: {path}')
+        boundary = mask
+        found = True
+    return boundary
+
+
 def outlines_to_labels(outline):
     """Closed interiors only, 4-connected; outline pixels remain background.
 
@@ -234,7 +278,7 @@ def _process(item, output):
     try:
         arrays = {ch: read_2d(item['paths'][ch]) for ch in item['channels']}
         shape = next(iter(arrays.values())).shape
-        masks = {kind: outlines_to_labels(read_2d(item['paths'][prefix+'Outlines'])) for kind,prefix in [('cells','Cells'),('nuclei','Nuclei')]}
+        masks = {kind: outlines_to_labels(read_outline(item['paths'][prefix+'Outlines'])) for kind,prefix in [('cells','Cells'),('nuclei','Nuclei')]}
         if any(a.shape != shape for a in [*arrays.values(),*masks.values()]):
             raise ValueError(f'{fov_id}: image/mask shapes differ')
         mask_set_id = 'mask_' + digest([fov_id, {k:hashlib.sha256(a.tobytes()).hexdigest() for k,a in masks.items()}, 'interiors-4conn-v1'])[:24]
