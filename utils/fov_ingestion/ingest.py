@@ -8,6 +8,7 @@ import os
 import shutil
 import time
 import uuid
+import warnings
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -56,7 +57,7 @@ def read_inputs(inputs):
     return pd.concat(frames, ignore_index=True)
 
 
-def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pixel_size_um=None):
+def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pixel_size_um=None, skip_missing_outlines=False):
     """Resolve every path before reading pixels; reject duplicate FOV identities.
 
     CSV identifiers preserve leading zeros. DataFrame/parquet values must retain
@@ -75,6 +76,7 @@ def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pi
         raise ValueError('pixel_size_um must be positive')
     root = Path(outline_root).expanduser().resolve()
     rows, seen, errors = [], set(), []
+    skipped = 0
     for index, row in df.iterrows():
         try:
             plate, well, site = (token(row[k]) for k in KEYS)
@@ -100,9 +102,17 @@ def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pi
                 paths[ch] = str(p.resolve())
             for kind in ('Cells', 'Nuclei'):
                 paths[kind + 'Outlines'] = str(root / plate / f'{kind}Outlines_{plate}_{well}_{site}.tiff')
-            for p in paths.values():
-                if not Path(p).is_file():
-                    raise FileNotFoundError(p)
+            # Missing intensity images remain errors, even for excluded FOVs.
+            for ch in channels:
+                if not Path(paths[ch]).is_file():
+                    raise FileNotFoundError(f'Missing intensity image: {paths[ch]}')
+            missing_outlines = [paths[k] for k in ('CellsOutlines', 'NucleiOutlines')
+                                if not Path(paths[k]).is_file()]
+            if missing_outlines:
+                if skip_missing_outlines:
+                    skipped += 1
+                    continue
+                raise FileNotFoundError('Missing outlines: ' + ', '.join(missing_outlines))
             # Preserve every original LoadData field as JSON without coercing IDs.
             metadata = json.loads(row.to_json())
             stats = {k: {'size': Path(p).stat().st_size, 'mtime_ns': Path(p).stat().st_mtime_ns} for k,p in paths.items()}
@@ -122,9 +132,13 @@ def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pi
             rows.append(item)
         except (ValueError, TypeError, OSError) as exc:
             errors.append(f'row {index}: {exc}')
+    if skipped:
+        warnings.warn(
+            f'Skipped {skipped} FOVs missing cell and/or nuclear outline files; '
+            f'{len(rows)} FOVs passed preflight.', stacklevel=2)
     if errors:
         raise ValueError('Preflight failed:\n' + '\n'.join(errors[:50]) + (f'\n... {len(errors)} errors total' if len(errors)>50 else ''))
-    if not rows:
+    if df.empty:
         raise ValueError('Empty LoadData table')
     return rows
 
@@ -292,7 +306,7 @@ def _process(item, output):
             shutil.rmtree(tmp)
 
 
-def ingest(inputs, outline_root, output, *, dataset_id, image_root=None, channels=None, pixel_size_um=None, workers=1, limit=None, dry_run=False):
+def ingest(inputs, outline_root, output, *, dataset_id, image_root=None, channels=None, pixel_size_um=None, workers=1, limit=None, dry_run=False, skip_missing_outlines=False):
     """Preflight all inputs, then ingest. Rerun identical command to resume.
 
     A single coordinator owns output; workers process disjoint FOVs. Completed
@@ -300,9 +314,12 @@ def ingest(inputs, outline_root, output, *, dataset_id, image_root=None, channel
     """
     if workers < 1 or (limit is not None and limit < 1):
         raise ValueError('workers and limit must be positive')
-    items = plan(inputs,outline_root,dataset_id=dataset_id,image_root=image_root,channels=channels,pixel_size_um=pixel_size_um)
+    items = plan(inputs,outline_root,dataset_id=dataset_id,image_root=image_root,channels=channels,pixel_size_um=pixel_size_um,
+                 skip_missing_outlines=skip_missing_outlines)
     if limit is not None:
         items = items[:limit]
+    if not items:
+        return pd.DataFrame(columns=['fov_id', 'plate', 'well', 'site', 'channels'])
     if dry_run:
         return pd.DataFrame([{'fov_id':i['fov_id'],'plate':i['plate'],'well':i['well'],'site':i['site'],'channels':i['channels']} for i in items])
     output = Path(output).resolve()
