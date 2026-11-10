@@ -25,11 +25,13 @@ REL_COLUMNS = ['nucleus_id','cell_id','overlap_pixels','nucleus_overlap_fraction
 OBJECT_COLUMNS = ['object_id','fov_id','mask_set_id','compartment','label','centroid_y','centroid_x','y0','x0','y1','x1','area_pixels','touches_border']
 
 
-def digest(value):
+def digest(value: dict) -> str:
+    """Compute a SHA-256 digest of a dictionary."""
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
-def token(value):
+def token(value: str | float) -> str:
+    """Normalize and validate an identity field for identity columns."""
     if pd.isna(value):
         raise ValueError('Missing identity field')
     if isinstance(value, (float, np.floating)) and value.is_integer():
@@ -40,7 +42,8 @@ def token(value):
     return s
 
 
-def read_inputs(inputs):
+def read_inputs(inputs: pd.DataFrame | str | Path | list[str | Path]) -> pd.DataFrame:
+    """Read input metadata from a DataFrame or file paths"""
     if isinstance(inputs, pd.DataFrame):
         return inputs.copy()
     if isinstance(inputs, (str, Path)):
@@ -57,11 +60,27 @@ def read_inputs(inputs):
     return pd.concat(frames, ignore_index=True)
 
 
-def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pixel_size_um=None, skip_missing_outlines=False):
-    """Resolve every path before reading pixels; reject duplicate FOV identities.
+def plan(
+    inputs: pd.DataFrame | str | Path | list[str | Path], 
+    outline_root: str | Path, 
+    *, 
+    dataset_id: str, 
+    image_root: str | Path | None = None, 
+    channels: list[str] | None = None, 
+    pixel_size_um: float | None = None, 
+    skip_missing_outlines: bool = False
+):
+    """
+    Resolve all image+segmentation masks file path and validate against duplicate FOVs.
 
-    CSV identifiers preserve leading zeros. DataFrame/parquet values must retain
-    the spelling used in filenames. Relative image paths require image_root.
+    :param inputs: CSV or Parquet paths or a DataFrame containing FOV metadata
+    :param outline_root: Root directory containing segmentation mask files
+    :param dataset_id: Stable, nonempty acquisition namespace
+    :param image_root: Root directory for relative image paths
+    :param channels: List of channel names corresponding to FileName_* columns
+    :param pixel_size_um: Physical pixel size in micrometers
+    :param skip_missing_outlines: Whether to skip FOVs missing outlines
+    :return: List of resolved FOV rows with absolute paths
     """
     if not dataset_id:
         raise ValueError('dataset_id must be a stable, nonempty acquisition namespace')
@@ -143,7 +162,15 @@ def plan(inputs, outline_root, *, dataset_id, image_root=None, channels=None, pi
     return rows
 
 
-def read_2d(path):
+def read_2d(path: str | Path):
+    """
+    Read a single 2D grayscale TIFF image. 
+    This project expects CellPainting images to be strictly 2D and grayscale.
+
+    :param path: Path to the TIFF file
+    :return: 2D numpy array of image pixels
+    :raises ValueError: If the image is not 2D, not grayscale, or contains nonfinite pixels
+    """
     arr = tifffile.imread(path)
     if arr.ndim != 2:
         raise ValueError(f'Expected a single 2D grayscale TIFF, got {arr.shape}: {path}')
@@ -152,11 +179,15 @@ def read_2d(path):
     return arr
 
 
-def read_outline(path):
-    """Read binary outlines as YX bool, including colored RGB exports.
+def read_outline(path: str | Path) -> np.ndarray:
+    """
+    Read binary outlines as YX bool. 
+    The pre-computed profiling data for this project saves outlines as RGB TIFFs (only G channel is used),
+        and this function does best guess 3 channel binarization to extract the outline.
 
-    RGB channels must be empty or encode the same boundary. Alpha is ignored.
-    Non-RGB stacks are accepted only when all pages are exact duplicates.
+    :param path: Path to the outline TIFF file
+    :return: 2D boolean array where True indicates outline pixels
+    :raises ValueError: If the outline is not valid or contains inconsistent RGB channels
     """
     with tifffile.TiffFile(path) as tif:
         arr = tif.asarray()
@@ -196,11 +227,16 @@ def read_outline(path):
     return boundary
 
 
-def outlines_to_labels(outline):
-    """Closed interiors only, 4-connected; outline pixels remain background.
+def outlines_to_labels(outline: np.ndarray) -> np.ndarray:
+    """
+    Convert binary outlines to labeled interiors.
+    Helps converts the outlines as instance segmentation masks.
+    Assumes outlines are closed, 4-connected and no two objects can overlap and
+        have outlines intersecting each other, which is the case for this project's data.
 
-    Open contours (including edge-cut objects) do not enclose an interior.
-    No morphology, boundary expansion, size filtering or re-segmentation.
+    :param outline: 2D binary array of outline pixels
+    :return: 2D array of labeled interiors (uint32)
+    :raises ValueError: If the input is not a 2D binary image
     """
     if outline.ndim != 2 or len(np.unique(outline)) > 2:
         raise ValueError('Outlines must be 2D binary images (zero background)')
@@ -209,7 +245,7 @@ def outlines_to_labels(outline):
     return labels.astype(np.uint32)
 
 
-def objects_for(labels, compartment, fov_id, mask_set_id):
+def objects_for(labels: np.ndarray, compartment: str, fov_id: str, mask_set_id: str) -> list[dict]:
     rows = []
     for label, box in enumerate(ndi.find_objects(labels), 1):
         if box is None:
@@ -237,7 +273,15 @@ def objects_for(labels, compartment, fov_id, mask_set_id):
     return rows
 
 
-def relationships(nuclei, cells, mask_set_id):
+def relationships(nuclei: np.ndarray, cells: np.ndarray, mask_set_id: str) -> list[dict]:
+    """
+    Compute relationships between nuclei and cells based on overlap.
+
+    :param nuclei: 2D array of labeled nuclei
+    :param cells: 2D array of labeled cells
+    :param mask_set_id: Identifier for the mask set
+    :return: List of dictionaries describing nucleus-cell relationships
+    """
     rows = []
     sizes = np.bincount(nuclei.ravel())
     valid = (nuclei > 0) & (cells > 0)
@@ -257,12 +301,26 @@ def relationships(nuclei, cells, mask_set_id):
     return rows
 
 
-def write_table(rows, path, columns=None):
+def write_table(rows: list[dict], path: str, columns: list[str] | None = None):
+    """
+    Write a list of dictionaries to a Parquet file.
+
+    :param rows: List of dictionaries representing table rows
+    :param path: Path to the output Parquet file
+    :param columns: Optional list of column names to include in the output
+    """
     df = pd.DataFrame(rows, columns=columns)
     df.to_parquet(path, index=False)
 
 
-def _process(item, output):
+def _process(item: dict, output: str) -> dict:
+    """
+    Process a single field of view (FOV) and write the results to the output directory.
+
+    :param item: Dictionary containing FOV metadata and file paths
+    :param output: Path to the output directory
+    :return: Dictionary with processing results
+    """
     from ome_arrow import OMEArrowDataset, from_numpy, write_ome_arrow_dataset
     fov_id = item['fov_id']
     parent = Path(output) / 'fovs'
@@ -350,16 +408,50 @@ def _process(item, output):
             shutil.rmtree(tmp)
 
 
-def ingest(inputs, outline_root, output, *, dataset_id, image_root=None, channels=None, pixel_size_um=None, workers=1, limit=None, dry_run=False, skip_missing_outlines=False):
-    """Preflight all inputs, then ingest. Rerun identical command to resume.
-
-    A single coordinator owns output; workers process disjoint FOVs. Completed
-    shards are immutable. Root catalogs become visible after complete success.
+def ingest(
+    inputs: list[Path | str], 
+    outline_root: Path | str, 
+    output: Path | str, 
+    *, 
+    dataset_id: str, 
+    image_root: Path | str | None = None, 
+    channels: list[str] | None = None, 
+    pixel_size_um: float | None = None, 
+    workers: int = 1, 
+    limit: int | None = None, 
+    dry_run: bool = False, 
+    skip_missing_outlines: bool = False
+) -> pd.DataFrame:
+    """
+    Preflight all inputs, then ingest. Rerun identical command to resume.
+    
+    :param inputs: List of input files or directories to ingest.
+    :param outline_root: Root directory containing outline files.
+    :param output: Directory to write the ingested output.
+    :param dataset_id: Identifier for the dataset.
+    :param image_root: Root directory containing image files (optional).
+    :param channels: List of channels to ingest (optional).
+    :param pixel_size_um: Pixel size in micrometers (optional).
+    :param workers: Number of worker threads to use.
+    :param limit: Limit the number of items to ingest (optional).
+    :param dry_run: If True, only perform a dry run without writing output.
+    :param skip_missing_outlines: If True, skip items with missing outlines.
+    :return: A pandas DataFrame containing ingestion results.
     """
     if workers < 1 or (limit is not None and limit < 1):
         raise ValueError('workers and limit must be positive')
-    items = plan(inputs,outline_root,dataset_id=dataset_id,image_root=image_root,channels=channels,pixel_size_um=pixel_size_um,
-                 skip_missing_outlines=skip_missing_outlines)
+
+    # Preflight all inputs to determine what needs to be ingested
+    items = plan(
+        inputs,
+        outline_root,
+        dataset_id=dataset_id,
+        image_root=image_root,
+        channels=channels,
+        pixel_size_um=pixel_size_um,
+        skip_missing_outlines=skip_missing_outlines
+    )
+    
     if limit is not None:
         items = items[:limit]
     if not items:
@@ -371,6 +463,8 @@ def ingest(inputs, outline_root, output, *, dataset_id, image_root=None, channel
     lock = output/'.ingest.lock'
     fd = os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
     os.write(fd,str(os.getpid()).encode()); os.close(fd)
+
+    # Create output directories and write collection spec
     try:
         (output/'fovs').mkdir(exist_ok=True)
         spec = {'version':VERSION,'dataset_id':dataset_id,'items':{i['fov_id']:i['fingerprint'] for i in items}}
