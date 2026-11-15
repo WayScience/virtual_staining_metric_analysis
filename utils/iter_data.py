@@ -46,7 +46,6 @@ def iter_metric_transform_frames(
     group_columns: str | list[str] = "transform_name",
 ) -> Iterator[tuple[Path, Any, pd.DataFrame]]:
     """Yield one pandas frame per metric directory and optional grouping."""
-
     if columns is None:
         columns = NEEDED_COLUMNS
 
@@ -66,7 +65,10 @@ def iter_metric_transform_frames(
         required_columns = set(columns) | set(group_columns)
         missing_columns = required_columns.difference(dataset.schema.names)
         if missing_columns:
-            raise ValueError(f"{subdir} is missing required columns: {sorted(missing_columns)}")
+            raise ValueError(
+                f"{subdir} is missing required columns: "
+                f"{sorted(missing_columns)}"
+            )
 
         # No additional grouping: yield the entire metric dataset.
         if not group_columns:
