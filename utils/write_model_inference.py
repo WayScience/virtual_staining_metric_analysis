@@ -34,7 +34,11 @@ def _serialize_model_catalogue(model_catalogue: pd.DataFrame) -> tuple[str, str]
     """
     Serialize the prediction-page catalogue and return it with its fingerprint.
 
-    :param: model_catalogue: DataFrame containing the model catalogue to serialize.
+    Each row must provide a ``checkpoint_path``. Its file contents are hashed
+    into ``checkpoint_sha256`` before serialization, replacing any supplied digest
+    so changes to checkpoint bytes also change the catalogue fingerprint.
+
+    :param model_catalogue: DataFrame containing the model catalogue to serialize.
     :return: A tuple containing the serialized JSON string of the catalogue and
         its SHA-256 fingerprint.
     """
@@ -48,6 +52,19 @@ def _serialize_model_catalogue(model_catalogue: pd.DataFrame) -> tuple[str, str]
             raise ValueError("model_catalogue page_index must be consecutive and zero-based.")
     else:
         catalogue.insert(0, "page_index", range(len(catalogue)))
+
+    if "checkpoint_path" not in catalogue.columns:
+        raise ValueError("model_catalogue must contain a checkpoint_path for each model.")
+
+    checkpoint_digests = []
+    for checkpoint_path in catalogue["checkpoint_path"]:
+        with Path(checkpoint_path).open("rb") as checkpoint:
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: checkpoint.read(1024 * 1024), b""):
+                digest.update(chunk)
+        checkpoint_digests.append(digest.hexdigest())
+    catalogue["checkpoint_sha256"] = checkpoint_digests
+    catalogue["checkpoint_path"] = catalogue["checkpoint_path"].map(str)
 
     catalogue_json = catalogue.to_json(
         orient="records",
@@ -153,7 +170,8 @@ def write_model_predictions(
         and write the resulting predictions to the specified output directory.
 
     :param models: A sequence of PyTorch models to run on the reference images.
-    :param model_catalogue: A DataFrame containing metadata for the models.
+    :param model_catalogue: Model metadata with one ``checkpoint_path`` per model,
+        in the same order as ``models``. Checkpoint contents are hashed for resume validation.
     :param output_dir: The directory where ``model_predictions.lance`` will be written.
     :param reference_lance_dir: The directory containing the reference image records.
     :param device: The device on which to run the models.
