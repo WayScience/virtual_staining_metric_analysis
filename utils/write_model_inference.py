@@ -24,10 +24,10 @@ import pyarrow as pa
 import torch
 from tqdm.auto import tqdm
 
-from .encoding import decode_pixel_record, encode_pixels
-from .iter_data import iter_lance_fragments
-from .parquet_writer import LanceWriter
-from .write_reference_image import SHARD_SIZE
+from utils.encoding import decode_pixel_record, encode_pixels
+from utils.iter_data import iter_lance_fragments
+from utils.parquet_writer import LanceWriter
+from utils.write_reference_image import SHARD_SIZE
 
 
 def _serialize_model_catalogue(model_catalogue: pd.DataFrame) -> tuple[str, str]:
@@ -96,6 +96,9 @@ def _prediction_batch(
     """
     Run every model over an image batch and return a ``BMYX`` array.
 
+    Axes are batch images (B), models in catalogue order (M), image height (Y),
+    and image width (X). Each image therefore has one prediction page per model.
+
     :param images: A sequence of input images as NumPy arrays.
     :param models: A sequence of PyTorch models to run on the images.
     :param device: The device on which to run the models.
@@ -151,7 +154,7 @@ def write_model_predictions(
 
     :param models: A sequence of PyTorch models to run on the reference images.
     :param model_catalogue: A DataFrame containing metadata for the models.
-    :param output_dir: The directory where the model predictions will be written.
+    :param output_dir: The directory where ``model_predictions.lance`` will be written.
     :param reference_lance_dir: The directory containing the reference image records.
     :param device: The device on which to run the models.
     :param batch_size: The number of images to process in each batch.
@@ -184,7 +187,7 @@ def write_model_predictions(
         )
 
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_lance_dir = output_dir / "data.lance"
+        output_lance_dir = output_dir / "model_predictions.lance"
         if output_lance_dir.exists() and not overwrite:
             existing_dataset = lance.dataset(output_lance_dir)
             for batch in existing_dataset.to_batches(columns=["model_catalogue_fingerprint"]):
@@ -208,7 +211,7 @@ def write_model_predictions(
             schema=output_schema,
             overwrite=overwrite,
             shardsize=SHARD_SIZE,
-            dataset_name="data.lance",
+            dataset_name=output_lance_dir.name,
         ) as writer:
             for _, _, reference_table in progress:
                 references = reference_table.to_pylist()
@@ -241,5 +244,9 @@ def write_model_predictions(
                             }
                         )
     finally:
+        # Return caller-owned models to CPU after success or failure, including
+        # errors during device setup. This releases their GPU tensor allocations,
+        # but PyTorch may retain the freed memory in its CUDA allocator cache.
+        # Original device placement and training/evaluation mode are not restored.
         for model in models:
             model.to("cpu")
