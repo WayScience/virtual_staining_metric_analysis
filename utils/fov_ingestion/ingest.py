@@ -4,20 +4,16 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
-import shutil
-import time
-import uuid
 import warnings
-from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import pyarrow as pa
 import pyarrow.parquet as pq
 import tifffile
 from scipy import ndimage as ndi
+
+from utils.fov_ingestion.writer import ShardPayload, run_collection
 
 VERSION = "ingest-v0"
 KEYS = ['Metadata_Plate', 'Metadata_Well', 'Metadata_Site']
@@ -313,99 +309,52 @@ def write_table(rows: list[dict], path: str, columns: list[str] | None = None):
     df.to_parquet(path, index=False)
 
 
-def _process(item: dict, output: str) -> dict:
-    """
-    Process a single field of view (FOV) and write the results to the output directory.
-
-    :param item: Dictionary containing FOV metadata and file paths
-    :param output: Path to the output directory
-    :return: Dictionary with processing results
-    """
-    from ome_arrow import OMEArrowDataset, from_numpy, write_ome_arrow_dataset
+def _reference_payload(item: dict) -> ShardPayload:
+    """TIFF/outline adapter; storage is delegated to the shared writer."""
     fov_id = item['fov_id']
-    parent = Path(output) / 'fovs'
-    dest = parent / fov_id
-    if dest.exists():
-        done = json.loads((dest / 'complete.json').read_text())
-        if done['fingerprint'] != item['fingerprint']:
-            raise ValueError(f'{fov_id}: inputs changed; use a new output collection')
-        return {**done, 'resumed': True}
-    tmp = parent / ('.' + fov_id + '.' + uuid.uuid4().hex)
-    tmp.mkdir()
-    start = time.perf_counter()
-    try:
-        arrays = {ch: read_2d(item['paths'][ch]) for ch in item['channels']}
-        shape = next(iter(arrays.values())).shape
-        masks = {kind: outlines_to_labels(read_outline(item['paths'][prefix+'Outlines'])) for kind,prefix in [('cells','Cells'),('nuclei','Nuclei')]}
-        if any(a.shape != shape for a in [*arrays.values(),*masks.values()]):
-            raise ValueError(f'{fov_id}: image/mask shapes differ')
-        mask_set_id = 'mask_' + digest([fov_id, {k:hashlib.sha256(a.tobytes()).hexdigest() for k,a in masks.items()}, 'interiors-4conn-v1'])[:24]
-        records, registry, expected = [], [], {}
-        for role, data in [('intensity',arrays),('labels',masks)]:
-            for name, arr in data.items():
-                image_id = 'img_' + digest([fov_id,role,name,mask_set_id if role=='labels' else 'reference'])[:24]
-                # Pixel units explicitly mark unknown physical calibration.
-                size = item['pixel_size_um']
-                record = from_numpy(arr, dim_order='YX', image_id=image_id, name=name,
-                    image_type='label' if role=='labels' else 'image', channel_names=[name],
-                    clamp_to_uint16=False, chunk_encoding='bytes',
-                    physical_size_x=size or 1., physical_size_y=size or 1., physical_size_unit='µm' if size else 'pixel')
-                records.append(record)
-                expected[image_id] = arr
-                registry.append({
-                    'image_id': image_id,
-                    'fov_id': fov_id,
-                    'dataset_id': item['dataset_id'],
-                    'reference_image_id': image_id,
-                    'mask_set_id': mask_set_id,
-                    'role': role,
-                    'channel': name,
-                    'variant': 'reference',
-                    'dtype': str(arr.dtype),
-                    'intensity_scale': 'raw' if role == 'intensity' else 'labels',
-                    'normalization_divisor': 65535. if role == 'intensity' else None,
-                    'ome_arrow_uri': f'fovs/{fov_id}/pixels.ome-arrow',
-                    'height': shape[0],
-                    'width': shape[1],
-                })
-        write_ome_arrow_dataset(records, tmp/'pixels.ome-arrow', pixel_dtype=None, compression='zstd')
-        stored = OMEArrowDataset(tmp/'pixels.ome-arrow')
-        for image_id, arr in expected.items():
-            actual = stored.read_image(image_id)[0,0,0]
-            if actual.dtype != arr.dtype or not np.array_equal(actual, arr):
-                raise RuntimeError(f'Pixel round-trip failed: {image_id}')
-        del stored
-        objs = [r for kind,mask in masks.items() for r in objects_for(mask,kind,fov_id,mask_set_id)]
-        rels = relationships(masks['nuclei'], masks['cells'], mask_set_id)
-        write_table(registry,tmp/'image_registry.parquet')
-        write_table(objs,tmp/'objects.parquet',OBJECT_COLUMNS)
-        write_table(rels,tmp/'relationships.parquet',REL_COLUMNS)
-        fov = {k:item[k] for k in ('dataset_id','fov_id','plate','well','site','pixel_size_um')}
-        fov.update({k: v for k, v in item['metadata'].items() if k.startswith('Metadata_')})
-        fov.update(height=shape[0],width=shape[1],mask_set_id=mask_set_id,metadata_json=json.dumps(item['metadata']))
-        write_table([fov],tmp/'fov.parquet')
-        (tmp/'provenance.json').write_text(json.dumps(item,indent=2))
-        # Detect source changes during ingestion (size/mtime, not content hashes).
-        for key,p in item['paths'].items():
-            st = Path(p).stat()
-            if {'size':st.st_size,'mtime_ns':st.st_mtime_ns} != item['source_stats'][key]:
-                raise RuntimeError(f'Source changed during ingestion: {p}')
-        done = {
-            'fov_id': fov_id,
-            'fingerprint': item['fingerprint'],
-            'elapsed_seconds': time.perf_counter() - start,
-            'nuclei': int(masks['nuclei'].max()),
-            'cells': int(masks['cells'].max()),
-            'unmatched_nuclei': int(masks['nuclei'].max()) - len({r['nucleus_id'] for r in rels}),
-            'bytes_written': sum(p.stat().st_size for p in tmp.rglob('*') if p.is_file()),
-            'resumed': False,
-        }
-        (tmp/'complete.json').write_text(json.dumps(done,indent=2))
-        tmp.rename(dest)
-        return done
-    finally:
-        if tmp.exists():
-            shutil.rmtree(tmp)
+    arrays = {ch: read_2d(item['paths'][ch]) for ch in item['channels']}
+    shape = next(iter(arrays.values())).shape
+    masks = {kind: outlines_to_labels(read_outline(item['paths'][prefix+'Outlines'])) for kind,prefix in [('cells','Cells'),('nuclei','Nuclei')]}
+    if any(a.shape != shape for a in [*arrays.values(),*masks.values()]):
+        raise ValueError(f'{fov_id}: image/mask shapes differ')
+    mask_set_id = 'mask_' + digest([fov_id, {k:hashlib.sha256(a.tobytes()).hexdigest() for k,a in masks.items()}, 'interiors-4conn-v1'])[:24]
+    registry, pixels = [], {}
+    for role, data in [('intensity', arrays), ('labels', masks)]:
+        for name, arr in data.items():
+            image_id = 'img_' + digest([fov_id, role, name, mask_set_id if role == 'labels' else 'reference'])[:24]
+            pixels[image_id] = arr
+            registry.append({
+                'image_id': image_id,
+                'fov_id': fov_id,
+                'dataset_id': item['dataset_id'],
+                'reference_image_id': image_id,
+                'mask_set_id': mask_set_id,
+                'role': role,
+                'channel': name,
+                'variant': 'reference',
+                'dtype': str(arr.dtype),
+                'intensity_scale': 'raw' if role == 'intensity' else 'labels',
+                'normalization_divisor': 65535. if role == 'intensity' else None,
+                'ome_arrow_uri': f'fovs/{fov_id}/pixels.ome-arrow',
+                'height': shape[0],
+                'width': shape[1],
+            })
+    objs = [r for kind,mask in masks.items() for r in objects_for(mask,kind,fov_id,mask_set_id)]
+    rels = relationships(masks['nuclei'], masks['cells'], mask_set_id)
+    fov = {k:item[k] for k in ('dataset_id','fov_id','plate','well','site','pixel_size_um')}
+    fov.update({k: v for k, v in item['metadata'].items() if k.startswith('Metadata_')})
+    fov.update(height=shape[0],width=shape[1],mask_set_id=mask_set_id,metadata_json=json.dumps(item['metadata']))
+    for key, path in item['paths'].items():
+        st = Path(path).stat()
+        if {'size': st.st_size, 'mtime_ns': st.st_mtime_ns} != item['source_stats'][key]:
+            raise RuntimeError(f'Source changed during ingestion: {path}')
+    return ShardPayload(
+        arrays=pixels, registry=pd.DataFrame(registry), fov=pd.DataFrame([fov]),
+        objects=pd.DataFrame(objs, columns=OBJECT_COLUMNS),
+        relationships=pd.DataFrame(rels, columns=REL_COLUMNS), provenance=item,
+        statistics={'nuclei': int(masks['nuclei'].max()), 'cells': int(masks['cells'].max()),
+                    'unmatched_nuclei': int(masks['nuclei'].max()) - len({r['nucleus_id'] for r in rels})},
+    )
 
 
 def ingest(
@@ -458,40 +407,10 @@ def ingest(
         return pd.DataFrame(columns=['fov_id', 'plate', 'well', 'site', 'channels'])
     if dry_run:
         return pd.DataFrame([{'fov_id':i['fov_id'],'plate':i['plate'],'well':i['well'],'site':i['site'],'channels':i['channels']} for i in items])
-    output = Path(output).resolve()
-    output.mkdir(parents=True,exist_ok=True)
-    lock = output/'.ingest.lock'
-    fd = os.open(lock,os.O_CREAT|os.O_EXCL|os.O_WRONLY)
-    os.write(fd,str(os.getpid()).encode()); os.close(fd)
-
-    # Create output directories and write collection spec
-    try:
-        (output/'fovs').mkdir(exist_ok=True)
-        spec = {'version':VERSION,'dataset_id':dataset_id,'items':{i['fov_id']:i['fingerprint'] for i in items}}
-        config = output/'collection.json'
-        if config.exists() and json.loads(config.read_text()) != spec:
-            raise ValueError('Output belongs to a different input selection/configuration; choose another output directory')
-        if not config.exists():
-            config.write_text(json.dumps(spec,indent=2))
-        results = []
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            for result in pool.map(lambda i:_process(i,output),items):
-                results.append(result)
-                print(f"[{len(results)}/{len(items)}] {result['fov_id']} {result['elapsed_seconds']:.2f}s resumed={result['resumed']}",flush=True)
-        for filename in ('fov.parquet','image_registry.parquet','objects.parquet','relationships.parquet'):
-            paths = [output/'fovs'/i['fov_id']/filename for i in items]
-            schema = pa.unify_schemas([pq.read_schema(p) for p in paths], promote_options='permissive')
-            name = 'fovs.parquet' if filename=='fov.parquet' else filename
-            tmp = output/(name+'.tmp')
-            with pq.ParquetWriter(tmp, schema, compression='zstd') as writer:
-                for path in paths:
-                    writer.write_table(pq.read_table(path).cast(schema))
-            tmp.replace(output/name)
-        pd.DataFrame(results).to_parquet(output/'timings.parquet',index=False)
-        (output/'_SUCCESS').write_text(digest(spec))
-        return pd.DataFrame(results)
-    finally:
-        lock.unlink()
+    spec = {'version': VERSION, 'dataset_id': dataset_id,
+            'items': {i['fov_id']: i['fingerprint'] for i in items}}
+    by_id = {i['fov_id']: i for i in items}
+    return run_collection(output, spec, lambda fov_id: _reference_payload(by_id[fov_id]), workers=workers)
 
 
 def load_plane(root, image_id, *, normalize=False):
