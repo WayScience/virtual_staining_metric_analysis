@@ -135,6 +135,13 @@ def plot_anova_variance_partition(
             names=row_cols,
         )
 
+    # Normalize the index so downstream logic always sees tuples.
+    if not isinstance(plot_wide.index, pd.MultiIndex):
+        plot_wide.index = pd.MultiIndex.from_arrays(
+            [plot_wide.index],
+            names=row_cols,
+        )
+
     # Order rows.
     row_index = plot_wide.index.to_frame(index=False)
     sort_columns: list[str] = []
