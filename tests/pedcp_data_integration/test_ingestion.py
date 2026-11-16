@@ -141,7 +141,7 @@ def test_download_cache_and_atomic_failure(synthetic, monkeypatch):
     from utils.pedcp_data_integration.recipe import SOURCE_COMMIT, SOURCE_FILES
 
     paths = download_metadata(synthetic.config)
-    assert len(paths) == len(SOURCE_FILES) == 15 and synthetic.artifacts.raw.name == SOURCE_COMMIT
+    assert len(paths) == len(SOURCE_FILES) == 51 and synthetic.artifacts.raw.name == SOURCE_COMMIT
     target = paths[-1]
     target.write_bytes(b"")
     response = BytesIO(b"column\nvalue\n")
@@ -180,7 +180,11 @@ def test_ingest_dryrun_resume_pixels_and_mount_free_report(synthetic, monkeypatc
     planes = collection.read_fov(collection.fovs.fov_id.iloc[0], normalize=False)
     assert len(planes) == 8
     for (role, channel), plane in planes.items():
-        expected = synthetic.pixels.copy() if role == "intensity" else np.zeros((32, 32), np.uint32)
+        expected = (
+            synthetic.pixels.astype(np.float32)
+            if role == "intensity"
+            else np.zeros((32, 32), np.uint32)
+        )
         if role == "labels":
             low, high = (6, 24) if channel == "cells" else (11, 19)
             expected[low:high, low:high] = 1
@@ -193,11 +197,17 @@ def test_ingest_dryrun_resume_pixels_and_mount_free_report(synthetic, monkeypatc
     assert pipeline.report(replace(offline, preview_count=0)) == []
 
 
-def test_real_data_smoke(tmp_path):
+def test_real_data_smoke(tmp_path, monkeypatch):
+    import json
+    from pathlib import Path
+
+    import numpy as np
     import pandas as pd
+    import tifffile
 
     from utils.fov_ingestion.collection import MicroscopyCollection
     from utils.fov_ingestion.ingest import ingest, plan
+    from utils.pedcp_data_integration import pipeline
     from utils.pedcp_data_integration import recipe as r
     from utils.pedcp_data_integration.artifacts import Artifacts
     from utils.project_config import load_project_config
@@ -226,6 +236,50 @@ def test_real_data_smoke(tmp_path):
     assert candidates, "No prepared fields with both outlines"
     item = candidates[0]
     tiny = pd.DataFrame([item["metadata"]])
-    assert len(ingest(tiny, config.outline_root, a.collection, workers=1, **options)) == 1
-    planes = MicroscopyCollection(a.collection).read_fov(item["fov_id"], normalize=False)
-    assert len(planes) == 8 and all(plane.ndim == 2 and plane.size for plane in planes.values())
+    # Keep an uncorrected baseline to confirm segmentation labels remain unchanged.
+    baseline = tmp_path / "uncorrected"
+    ingest(tiny, config.outline_root, baseline, workers=1, **options)
+    original = MicroscopyCollection(baseline).read_fov(item["fov_id"], normalize=False)
+    a.export_parquet.parent.mkdir(parents=True, exist_ok=True)
+    tiny.to_parquet(a.export_parquet, index=False)
+    a.raw.parent.mkdir(parents=True, exist_ok=True)
+    a.raw.symlink_to(Artifacts(source).raw, target_is_directory=True)
+    monkeypatch.setattr(
+        "utils.pedcp_data_integration.artifacts.__file__",
+        str(tmp_path / "utils/pedcp_data_integration/artifacts.py"),
+    )
+    assert not pipeline.ingest_prepared(replace(config, workers=1)).resumed.any()
+    collection = MicroscopyCollection(a.collection)
+    planes = collection.read_fov(item["fov_id"], normalize=False)
+    assert len(planes) == 8
+    provenance = json.loads(
+        (a.collection / "fovs" / item["fov_id"] / "provenance.json").read_text()
+    )
+    for channel in r.CHANNELS:
+        field_path = (
+            a.raw
+            / "illumination"
+            / item["plate"]
+            / f"{item['plate']}_Illum{channel.removeprefix('Orig')}.npy"
+        )
+        field = np.load(field_path, allow_pickle=False).astype(np.float64)
+        raw = tifffile.imread(item["paths"][channel])
+        method = "divide" if channel == "OrigBrightfield" else "subtract"
+        assert field.shape == raw.shape and np.isfinite(field).all()
+        assert method != "divide" or (field > 0).all()
+        expected = raw / field if method == "divide" else raw - 65535.0 * field
+        expected = np.clip(expected, 0, 65535)
+        actual = planes["intensity", channel]
+        assert actual.dtype == np.float32 and np.isfinite(actual).all()
+        np.testing.assert_allclose(actual, expected, rtol=1e-6, atol=0.01, err_msg=channel)
+        assert np.any(actual != raw), f"Correction was a no-op for {channel}"
+        registry = collection.images.query("role == 'intensity' and channel == @channel")
+        assert registry.illumination_method.tolist() == [method]
+        assert provenance["illumination"][channel]["method"] == method
+        key = f"illumination:{channel}"
+        assert Path(provenance["paths"][key]).samefile(field_path)
+    for compartment in ("cells", "nuclei"):
+        np.testing.assert_array_equal(
+            planes["labels", compartment], original["labels", compartment]
+        )
+    assert pipeline.ingest_prepared(replace(config, workers=1)).resumed.all()

@@ -80,4 +80,9 @@ def synthetic(tmp_path, monkeypatch):
         path = artifacts.raw / name
         path.parent.mkdir(parents=True, exist_ok=True)
         frame.to_csv(path, index=False)
+    for name in r.SOURCE_FILES:
+        if name.endswith(".npy"):
+            path = artifacts.raw / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            np.save(path, np.full(pixels.shape, float("Brightfield" in name), dtype=np.float32))
     return SimpleNamespace(config=config, artifacts=artifacts, loads=loads, qc=qc, pixels=pixels)

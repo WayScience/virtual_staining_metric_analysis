@@ -10,7 +10,12 @@ from utils.pedcp_data_integration import plots
 from utils.pedcp_data_integration.artifacts import Artifacts
 from utils.pedcp_data_integration.download import download_metadata
 from utils.pedcp_data_integration.file_index import prepare_file_index as prepare
-from utils.pedcp_data_integration.recipe import CHANNELS, DATASET_ID, PIXEL_SIZE_UM
+from utils.pedcp_data_integration.recipe import (
+    CHANNELS,
+    DATASET_ID,
+    ILLUMINATION_METHODS,
+    PIXEL_SIZE_UM,
+)
 
 
 def ingest_prepared(config, dry_run=False) -> pd.DataFrame:
@@ -19,11 +24,20 @@ def ingest_prepared(config, dry_run=False) -> pd.DataFrame:
     if config.outline_root is None or not config.outline_root.is_dir():
         raise ValueError("Ingest requires an existing outline_root directory")
     prepared = pd.read_parquet(artifacts.export_parquet)
+    illumination = {
+        (plate, channel): (
+            artifacts.raw / "illumination" / plate /
+            f"{plate}_Illum{channel.removeprefix('Orig')}.npy", method
+        )
+        for plate in prepared.Metadata_Plate.unique()
+        for channel, method in ILLUMINATION_METHODS.items()
+    }
     results = ingest(
         inputs=[artifacts.export_parquet],
         outline_root=config.outline_root,
         output=artifacts.collection,
         dataset_id=DATASET_ID,
+        illumination=illumination,
         channels=list(CHANNELS),
         image_root=config.image_root,
         pixel_size_um=PIXEL_SIZE_UM,

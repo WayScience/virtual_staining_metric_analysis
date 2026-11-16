@@ -44,3 +44,15 @@ SOURCE_FILES = {
         for plate in PLATES
     },
 }
+
+# Plate-specific CellProfiler illumination functions (Round 1).
+ILLUMINATION_METHODS = {
+    channel: "divide" if channel == "OrigBrightfield" else "subtract"
+    for channel in CHANNELS
+}
+for plate in PLATES:
+    for channel in CHANNELS:
+        filename = f"{plate}_Illum{channel.removeprefix('Orig')}.npy"
+        SOURCE_FILES[f"illumination/{plate}/{filename}"] = (
+            f"1.illumination_correction/illum_directory/Round_1_data/{plate}/{filename}"
+        )

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import warnings
+from functools import lru_cache
 from pathlib import Path
 
 import numpy as np
@@ -15,7 +16,7 @@ from scipy import ndimage as ndi
 
 from utils.fov_ingestion.writer import ShardPayload, run_collection
 
-VERSION = "ingest-v0"
+VERSION = "ingest-v1"
 KEYS = ['Metadata_Plate', 'Metadata_Well', 'Metadata_Site']
 REL_COLUMNS = ['nucleus_id','cell_id','overlap_pixels','nucleus_overlap_fraction','is_best_match']
 OBJECT_COLUMNS = ['object_id','fov_id','mask_set_id','compartment','label','centroid_y','centroid_x','y0','x0','y1','x1','area_pixels','touches_border']
@@ -64,7 +65,8 @@ def plan(
     image_root: str | Path | None = None, 
     channels: list[str] | None = None, 
     pixel_size_um: float | None = None, 
-    skip_missing_outlines: bool = False
+    skip_missing_outlines: bool = False,
+    illumination: dict | None = None
 ):
     """
     Resolve all image+segmentation masks file path and validate against duplicate FOVs.
@@ -128,6 +130,19 @@ def plan(
                     skipped += 1
                     continue
                 raise FileNotFoundError('Missing outlines: ' + ', '.join(missing_outlines))
+            corrections = {}
+            if illumination is not None:
+                for ch in channels:
+                    if (plate, ch) not in illumination:
+                        raise ValueError(f'Missing illumination mapping: {plate}/{ch}')
+                    path, method = illumination[plate, ch]
+                    path = Path(path).resolve(strict=True)
+                    st = path.stat()
+                    if method not in ('subtract', 'divide'):
+                        raise ValueError(f'Invalid illumination method: {method}')
+                    _illumination_array(str(path), st.st_size, st.st_mtime_ns, method)
+                    paths[f'illumination:{ch}'] = str(path)
+                    corrections[ch] = {'method': method, 'divisor': 65535.}
             # Preserve every original LoadData field as JSON without coercing IDs.
             metadata = json.loads(row.to_json())
             stats = {k: {'size': Path(p).stat().st_size, 'mtime_ns': Path(p).stat().st_mtime_ns} for k,p in paths.items()}
@@ -141,6 +156,7 @@ def plan(
                 'channels': channels,
                 'metadata': metadata,
                 'source_stats': stats,
+                'illumination': corrections,
                 'pixel_size_um': pixel_size_um,
             }
             item['fingerprint'] = digest([VERSION, item])
@@ -309,10 +325,38 @@ def write_table(rows: list[dict], path: str, columns: list[str] | None = None):
     df.to_parquet(path, index=False)
 
 
+@lru_cache(maxsize=36)
+def _illumination_array(path, size, mtime_ns, method):
+    field = np.asarray(np.load(path, allow_pickle=False), dtype=np.float32)
+    if field.ndim != 2 or not field.size or not np.isfinite(field).all():
+        raise ValueError(f'Invalid illumination array: {path}')
+    if method == 'divide' and np.any(field <= 0):
+        raise ValueError(f'Nonpositive division field: {path}')
+    field.setflags(write=False)
+    return field
+
+
+def _correct_plane(image, field, method):
+    if image.dtype != np.uint16 or image.shape != field.shape:
+        raise ValueError('Correction requires uint16 TIFF and matching YX illumination shape')
+    result = image.astype(np.float32)
+    if method == 'subtract':
+        result -= np.float32(65535) * field
+    else:
+        result /= field
+    return np.clip(result, 0, 65535, out=result)
+
+
 def _reference_payload(item: dict) -> ShardPayload:
     """TIFF/outline adapter; storage is delegated to the shared writer."""
     fov_id = item['fov_id']
     arrays = {ch: read_2d(item['paths'][ch]) for ch in item['channels']}
+    for ch, correction in item.get('illumination', {}).items():
+        key = f'illumination:{ch}'
+        stats = item['source_stats'][key]
+        field = _illumination_array(item['paths'][key], stats['size'],
+                                    stats['mtime_ns'], correction['method'])
+        arrays[ch] = _correct_plane(arrays[ch], field, correction['method'])
     shape = next(iter(arrays.values())).shape
     masks = {kind: outlines_to_labels(read_outline(item['paths'][prefix+'Outlines'])) for kind,prefix in [('cells','Cells'),('nuclei','Nuclei')]}
     if any(a.shape != shape for a in [*arrays.values(),*masks.values()]):
@@ -334,6 +378,7 @@ def _reference_payload(item: dict) -> ShardPayload:
                 'variant': 'reference',
                 'dtype': str(arr.dtype),
                 'intensity_scale': 'raw' if role == 'intensity' else 'labels',
+                'illumination_method': item.get('illumination', {}).get(name, {}).get('method') if role == 'intensity' else None,
                 'normalization_divisor': 65535. if role == 'intensity' else None,
                 'ome_arrow_uri': f'fovs/{fov_id}/pixels.ome-arrow',
                 'height': shape[0],
@@ -369,7 +414,8 @@ def ingest(
     workers: int = 1, 
     limit: int | None = None, 
     dry_run: bool = False, 
-    skip_missing_outlines: bool = False
+    skip_missing_outlines: bool = False,
+    illumination: dict | None = None
 ) -> pd.DataFrame:
     """
     Preflight all inputs, then ingest. Rerun identical command to resume.
@@ -398,7 +444,8 @@ def ingest(
         image_root=image_root,
         channels=channels,
         pixel_size_um=pixel_size_um,
-        skip_missing_outlines=skip_missing_outlines
+        skip_missing_outlines=skip_missing_outlines,
+        illumination=illumination
     )
     
     if limit is not None:
