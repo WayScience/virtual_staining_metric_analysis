@@ -4,7 +4,7 @@ import os
 import tempfile
 from pathlib import Path
 
-from .recipe import SOURCE_COMMIT
+from utils.pedcp_data_integration.recipe import SOURCE_COMMIT
 
 
 class Artifacts:

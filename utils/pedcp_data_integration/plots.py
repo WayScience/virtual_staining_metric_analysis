@@ -1,4 +1,4 @@
-"""Data ingestion summary plots"""
+"""Data ingestion summary plots (FOV counts, QC and montages)"""
 
 from pathlib import Path
 from urllib.parse import quote
@@ -10,7 +10,7 @@ from matplotlib.backends.backend_agg import FigureCanvasAgg
 from matplotlib.colors import ListedColormap, NoNorm, PowerNorm
 from matplotlib.figure import Figure
 
-from .recipe import CHANNELS
+from utils.pedcp_data_integration.recipe import CHANNELS
 
 
 def plot_counts(counts: pd.DataFrame, path: Path, title: str) -> Path:

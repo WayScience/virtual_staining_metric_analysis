@@ -4,8 +4,8 @@ from pathlib import Path
 from urllib.parse import quote
 from urllib.request import urlopen
 
-from .artifacts import Artifacts, atomic_write
-from .recipe import SOURCE_COMMIT, SOURCE_FILES, SOURCE_REPO
+from utils.pedcp_data_integration.artifacts import Artifacts, atomic_write
+from utils.pedcp_data_integration.recipe import SOURCE_COMMIT, SOURCE_FILES, SOURCE_REPO
 
 
 def download_metadata(config) -> list[Path]:

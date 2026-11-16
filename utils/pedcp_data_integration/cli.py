@@ -2,9 +2,8 @@
 
 import argparse
 
+from utils.pedcp_data_integration import pipeline
 from utils.project_config import load_project_config
-
-from . import pipeline
 
 
 def main(argv=None) -> int:

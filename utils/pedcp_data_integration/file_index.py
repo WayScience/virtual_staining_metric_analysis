@@ -1,4 +1,7 @@
-"""Build the QC-filtered, annotated PedCP image file index."""
+"""
+Build the QC-filtered, annotated PedCP image file index from downloaded loaddata
+Fixing image pathing in relation to local image data.
+"""
 
 from collections.abc import Mapping
 from functools import cache

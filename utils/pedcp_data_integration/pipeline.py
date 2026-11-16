@@ -6,12 +6,11 @@ import pandas as pd
 
 from utils.fov_ingestion.collection import MicroscopyCollection
 from utils.fov_ingestion.ingest import ingest
-
-from . import plots
-from .artifacts import Artifacts
-from .download import download_metadata
-from .file_index import prepare_file_index as prepare
-from .recipe import CHANNELS, DATASET_ID, PIXEL_SIZE_UM
+from utils.pedcp_data_integration import plots
+from utils.pedcp_data_integration.artifacts import Artifacts
+from utils.pedcp_data_integration.download import download_metadata
+from utils.pedcp_data_integration.file_index import prepare_file_index as prepare
+from utils.pedcp_data_integration.recipe import CHANNELS, DATASET_ID, PIXEL_SIZE_UM
 
 
 def ingest_prepared(config, dry_run=False) -> pd.DataFrame:
