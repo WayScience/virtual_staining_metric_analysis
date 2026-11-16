@@ -1,6 +1,7 @@
 """Storage-only backend shared by reference ingestion and derived collections."""
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -111,13 +112,13 @@ def run_collection(output, spec, produce, *, workers=1):
         raise ValueError('Positive workers and nonempty FOV selection required')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
-    lock = output / '.ingest.lock'  # Compatible with the existing ingestion lock.
-    fd = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+    lock = output / '.ingest.lock'
+    fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o666)
     try:
+        # The kernel releases this lock even if the coordinator is terminated.
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        os.ftruncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
-    finally:
-        os.close(fd)
-    try:
         config = output / 'collection.json'
         if config.exists():
             if json.loads(config.read_text()) != spec:
@@ -155,4 +156,5 @@ def run_collection(output, spec, produce, *, workers=1):
         (output / '_SUCCESS.tmp').replace(success)
         return pd.DataFrame(results)
     finally:
-        lock.unlink()
+        # Keep the inode: unlinking could let another coordinator lock a new file.
+        os.close(fd)

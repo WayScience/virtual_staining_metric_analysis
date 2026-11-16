@@ -1,5 +1,9 @@
 """Standalone backend tests: only synthetic data under pytest's temporary directory."""
 
+import json
+import select
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import numpy as np
@@ -98,6 +102,21 @@ def test_plan_rejects_duplicates_and_controls_missing_outlines(source):
         plan(source.frame, skip_missing_outlines=True, **source.options)
 
 
+@pytest.mark.parametrize("suffix", ["csv", "parquet"])
+def test_expanded_metadata_is_string_without_changing_json(source, tmp_path, suffix):
+    frame = source.frame.assign(Metadata_Count=7, Metadata_Optional=None, Metadata_Flag=True)
+    path = tmp_path / f"metadata.{suffix}"
+    getattr(frame, f"to_{suffix}")(path, index=False)
+    (item,) = plan(path, **source.options)
+    ingest(path, output=source.output, **source.options)
+    collection = MicroscopyCollection(source.output)
+    row = collection.fovs.iloc[0]
+    for key, value in item["metadata"].items():
+        if key.startswith("Metadata_"):
+            assert row[key] == str(value)
+    assert json.loads(row.metadata_json) == item["metadata"]
+
+
 def test_ingest_round_trip_pixels_metadata_and_objects(source):
     result = ingest(source.frame, output=source.output, pixel_size_um=0.5, **source.options)
     assert not result.resumed.any()
@@ -155,6 +174,8 @@ def test_resume_and_reject_changed_inputs_or_completion_marker(source):
     ingest(source.frame, output=source.output, **source.options)
     marker = source.output / "_SUCCESS"
     original = marker.read_text()
+    # A leftover lock file from an exited coordinator must not prevent resume.
+    (source.output / ".ingest.lock").write_text("terminated coordinator")
     result = ingest(source.frame, output=source.output, **source.options)
     assert result.resumed.all()
     assert marker.read_text() == original
@@ -162,7 +183,7 @@ def test_resume_and_reject_changed_inputs_or_completion_marker(source):
     with pytest.raises(ValueError, match="different configuration"):
         ingest(changed, output=source.output, **source.options)
     assert marker.read_text() == original
-    assert not (source.output / ".ingest.lock").exists()
+    assert (source.output / ".ingest.lock").is_file()
     marker.write_text("invalid")
     with pytest.raises(ValueError, match="completion marker"):
         MicroscopyCollection(source.output)
@@ -174,5 +195,40 @@ def test_failed_shard_is_cleaned(source):
     with pytest.raises(ValueError, match="shapes differ"):
         ingest(source.frame, output=source.output, **source.options)
     assert not (source.output / "_SUCCESS").exists()
-    assert not (source.output / ".ingest.lock").exists()
+    assert (source.output / ".ingest.lock").is_file()
     assert list((source.output / "fovs").iterdir()) == []
+
+
+def test_active_coordinator_excludes_others_and_killed_coordinator_can_resume(source):
+    from utils.fov_ingestion.ingest import VERSION
+
+    (item,) = plan(source.frame, **source.options)
+    spec = {"version": VERSION, "dataset_id": "test",
+            "items": {item["fov_id"]: item["fingerprint"]}}
+    script = """
+import json
+import signal
+import sys
+from utils.fov_ingestion.writer import run_collection
+
+def produce(fov_id):
+    print('ready', flush=True)
+    signal.pause()
+
+run_collection(sys.argv[1], json.loads(sys.argv[2]), produce)
+"""
+    process = subprocess.Popen(
+        [sys.executable, "-c", script, str(source.output), json.dumps(spec)],
+        stdout=subprocess.PIPE, text=True,
+    )
+    try:
+        assert select.select([process.stdout], [], [], 30)[0], "Coordinator did not start"
+        assert process.stdout.readline().strip() == "ready"
+        with pytest.raises((BlockingIOError, FileExistsError)):
+            ingest(source.frame, output=source.output, **source.options)
+    finally:
+        process.kill()
+        process.communicate(timeout=10)
+    result = ingest(source.frame, output=source.output, **source.options)
+    assert not result.resumed.any()
+    assert ingest(source.frame, output=source.output, **source.options).resumed.all()

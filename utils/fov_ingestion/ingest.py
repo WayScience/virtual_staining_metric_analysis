@@ -387,7 +387,7 @@ def _reference_payload(item: dict) -> ShardPayload:
     objs = [r for kind,mask in masks.items() for r in objects_for(mask,kind,fov_id,mask_set_id)]
     rels = relationships(masks['nuclei'], masks['cells'], mask_set_id)
     fov = {k:item[k] for k in ('dataset_id','fov_id','plate','well','site','pixel_size_um')}
-    fov.update({k: v for k, v in item['metadata'].items() if k.startswith('Metadata_')})
+    fov.update({k: str(v) for k, v in item['metadata'].items() if k.startswith('Metadata_')})
     fov.update(height=shape[0],width=shape[1],mask_set_id=mask_set_id,metadata_json=json.dumps(item['metadata']))
     for key, path in item['paths'].items():
         st = Path(path).stat()

@@ -19,6 +19,8 @@ dependencies = [
     "tifffile",
     "numpy>=1.26",
     "pandas>=2.2",
+    "PyYAML",
+    "scipy",
     "statsmodels",
     "scikit-learn",
     "umap-learn>=0.5.7,<0.6",
@@ -50,7 +52,9 @@ where = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["local_ingestion: PedCP ingestion tests; explicit local opt-in only"]
 
 [project.scripts]
 fov-ingest = "utils.fov_ingestion.cli:main"
+pedcp-ingest = "utils.pedcp_data_integration.cli:main"
 fov-degrade = "utils.degradation.cli:main"
