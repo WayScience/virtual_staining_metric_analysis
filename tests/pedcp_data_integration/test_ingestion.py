@@ -3,8 +3,6 @@ from dataclasses import replace
 
 import pytest
 
-pytestmark = pytest.mark.local_ingestion
-
 
 def test_cli_launcher_and_notebook_cutover(tmp_path, monkeypatch):
     import subprocess
@@ -197,6 +195,7 @@ def test_ingest_dryrun_resume_pixels_and_mount_free_report(synthetic, monkeypatc
     assert pipeline.report(replace(offline, preview_count=0)) == []
 
 
+@pytest.mark.local_ingestion
 def test_real_data_smoke(tmp_path, monkeypatch):
     import json
     from pathlib import Path

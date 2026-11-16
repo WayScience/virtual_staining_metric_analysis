@@ -1,5 +1,4 @@
 import os
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -9,7 +8,7 @@ def pytest_collection_modifyitems(items):
     disabled = os.environ.get("PEDCP_RUN_LOCAL_TESTS") != "1"
     disabled |= os.environ.get("GITHUB_ACTIONS", "").lower() == "true"
     for item in items:
-        if disabled and Path(item.path).resolve().is_relative_to(Path(__file__).resolve().parent):
+        if disabled and item.get_closest_marker("local_ingestion") is not None:
             item.add_marker(pytest.mark.skip(reason="Set PEDCP_RUN_LOCAL_TESTS=1; never Actions"))
 
 
