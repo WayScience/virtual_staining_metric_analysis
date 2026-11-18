@@ -52,7 +52,7 @@ where = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-markers = ["local_ingestion: PedCP ingestion tests; explicit local opt-in only"]
+markers = ["local_ingestion: Mounted-data PedCP smoke tests; explicit local opt-in, never Actions"]
 
 [project.scripts]
 fov-ingest = "utils.fov_ingestion.cli:main"

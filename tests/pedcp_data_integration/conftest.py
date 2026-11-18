@@ -85,3 +85,42 @@ def synthetic(tmp_path, monkeypatch):
             path.parent.mkdir(parents=True, exist_ok=True)
             np.save(path, np.full(pixels.shape, float("Brightfield" in name), dtype=np.float32))
     return SimpleNamespace(config=config, artifacts=artifacts, loads=loads, qc=qc, pixels=pixels)
+
+
+@pytest.fixture
+def training_synthetic(synthetic):
+    """Add one tiny FOV per density/time, leaving the legacy fixture and decoys intact."""
+    from shutil import copyfile
+
+    import pandas as pd
+
+    from utils.pedcp_data_integration import recipe as r
+
+    raw = synthetic.artifacts.raw
+    wells = [f"B{i:02d}" for i in range(1, len(r.TRAIN_DENSITIES) + 1)]
+    path = raw / "platemaps/Assay_Plate1_platemap.csv"
+    additions = pd.DataFrame(
+        {"well": wells, "cell_line": r.TRAIN_CELL_LINE, "seeding_density": r.TRAIN_DENSITIES}
+    )
+    pd.concat([pd.read_csv(path), additions], ignore_index=True).to_csv(path, index=False)
+    for plate in r.PLATES[::2]:
+        for folder, filename in (
+            ("loaddatas", f"{plate}_concatenated.csv"),
+            ("whole_img_qc_output", f"{plate}.csv"),
+        ):
+            path = raw / folder / filename
+            original = pd.read_csv(path)
+            extra = pd.concat([original.iloc[[0]]] * len(wells), ignore_index=True)
+            extra["Metadata_Well"] = wells
+            pd.concat([original, extra], ignore_index=True).to_csv(path, index=False)
+        target = synthetic.config.outline_root / plate
+        target.mkdir(exist_ok=True)
+        for well in wells:
+            for kind in ("Cells", "Nuclei"):
+                source = (
+                    synthetic.config.outline_root
+                    / r.PLATES[0]
+                    / f"{kind}Outlines_{r.PLATES[0]}_A01_1.tiff"
+                )
+                copyfile(source, target / f"{kind}Outlines_{plate}_{well}_1.tiff")
+    return synthetic

@@ -8,13 +8,22 @@ SOURCE_COMMIT = "6129e23e64cad5402c6d1d5ba679ff5f3eda82e4"
 SOURCE_REPO = "https://github.com/WayScience/pediatric_cancer_atlas_profiling.git"
 SOURCE_PATH_PREFIX = PurePosixPath("/media/18tbdrive/ALSF_pilot_data")
 
-# Data/subsetting settings
+# Data/subsetting settings, shared
 FIELD_KEYS = ["Metadata_Plate", "Metadata_Well", "Metadata_Site"]  # unique FOV identifiers
-DATASET_ID = "pedcp90-reference"  # naming the reference write
 PIXEL_SIZE_UM = 0.593  # helps with scale bar when visualizing images
 PLATES = tuple(f"BR{number:08d}" for number in range(143976, 143982))  # only pedcp batch 1 plates
 CHANNELS = ("OrigER", "OrigRNA", "OrigAGP", "OrigMito", "OrigDNA", "OrigBrightfield")
+
+# Degradation specific filtering and settings
+DATASET_ID = "pedcp90-reference"  # naming the reference write
 TIME_POINT = 24  # for degradation, only use the 24-hour time point
+
+# Training-specific settings
+TRAIN_PLATEMAP = "Assay_Plate1_platemap"
+TRAIN_CELL_LINE = "U2-OS"
+TRAIN_TIME_POINTS = (24, 48, 72)
+TRAIN_DENSITIES = (1000, 2000, 4000, 8000, 12000)
+COHORTS = ("all", "reference", "training")
 
 # QC Settings
 BLUR_METRIC = "ImageQuality_PowerLogLogSlope"
@@ -47,8 +56,7 @@ SOURCE_FILES = {
 
 # Plate-specific CellProfiler illumination functions (Round 1).
 ILLUMINATION_METHODS = {
-    channel: "divide" if channel == "OrigBrightfield" else "subtract"
-    for channel in CHANNELS
+    channel: "divide" if channel == "OrigBrightfield" else "subtract" for channel in CHANNELS
 }
 for plate in PLATES:
     for channel in CHANNELS:

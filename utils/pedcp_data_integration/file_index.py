@@ -12,7 +12,7 @@ import pandas as pd
 
 from . import plots
 from . import recipe as r
-from .artifacts import Artifacts, atomic_write
+from .artifacts import Artifacts, atomic_write, selected_artifacts
 
 
 def _validate_index_keys(frame, keys):
@@ -99,8 +99,9 @@ def build_well_annotations(
     return result
 
 
-def prepare_file_index(config) -> Path:
-    """Validate, QC-filter and annotate source CSVs; write the Parquet index and plots."""
+def prepare_file_index(config, *, cohort="all") -> dict[str, Path]:
+    """Apply shared six-plate QC, then write the selected reference/training indexes."""
+    outputs = selected_artifacts(config, cohort)
     artifacts = Artifacts(config)
     if config.image_root is None:
         raise ValueError("Preparation requires image_root")
@@ -124,8 +125,22 @@ def prepare_file_index(config) -> Path:
     curated = build_well_annotations(barcode, maps)
     if set(barcode.barcode) != set(r.PLATES) or set(curated.Metadata_Plate) != set(r.PLATES):
         raise ValueError("Barcode and annotations must cover exactly the six recipe plates")
-    cohort = curated.loc[curated.time_point.eq(r.TIME_POINT)]
-    stages, selected = [], []
+    reference = curated.loc[curated.time_point.eq(r.TIME_POINT)]
+    annotations = {}
+    for name, output in outputs.items():
+        if output.density is None:
+            annotations[name] = reference
+        else:
+            training = curated.assign(
+                platemap_file=curated.Metadata_Plate.map(barcode.set_index("barcode").platemap_file)
+            )
+            annotations[name] = training.loc[
+                training.platemap_file.eq(r.TRAIN_PLATEMAP)
+                & training.cell_line.eq(r.TRAIN_CELL_LINE)
+                & training.time_point.isin(r.TRAIN_TIME_POINTS)
+                & training.seeding_density.eq(output.density)
+            ]
+    stages, selected = [], {name: [] for name in outputs}
     for plate in r.PLATES:
         raw = pd.read_csv(artifacts.raw / f"loaddatas/{plate}_concatenated.csv")
         if set(raw.Metadata_Plate) != {plate}:
@@ -135,26 +150,62 @@ def prepare_file_index(config) -> Path:
         if not keys.isin(qc_keys).all():
             raise ValueError(f"Missing QC coverage: {plate}")
         good = valid.loc[keys.isin(qc_keys[passing])]
-        timed = good.loc[good.Metadata_Plate.isin(cohort.Metadata_Plate)]
-        annotated = timed.merge(
-            cohort, on=r.FIELD_KEYS[:2], validate="many_to_one", suffixes=(False, False)
+        for name, annotation in annotations.items():
+            timed = good.loc[good.Metadata_Plate.isin(annotation.Metadata_Plate)]
+            annotated = timed.merge(
+                annotation, on=r.FIELD_KEYS[:2], validate="many_to_one", suffixes=(False, False)
+            )
+            selected[name].append(annotated)
+            if name == "reference":
+                stages.append((len(raw), len(valid), len(good), len(timed), len(annotated)))
+    # Validate every requested selection before replacing any prepared index.
+    frames = {name: pd.concat(parts, ignore_index=True) for name, parts in selected.items()}
+    for name, frame in frames.items():
+        if frame.empty:
+            raise ValueError(f"{name}: no annotated QC-passing fields")
+        if outputs[name].density is not None:
+            missing = set(r.TRAIN_TIME_POINTS) - set(frame.time_point)
+            if missing:
+                raise ValueError(f"{name}: no QC-passing fields at timepoints {sorted(missing)}")
+            print(f"{name}: prepared coverage\n{training_coverage(frame).to_string()}")
+    for name, frame in frames.items():
+        atomic_write(
+            outputs[name].export_parquet,
+            lambda p, frame=frame: frame.to_parquet(p, compression="zstd", index=False),
         )
-        stages.append((len(raw), len(valid), len(good), len(timed), len(annotated)))
-        selected.append(annotated)
-    result = pd.concat(selected, ignore_index=True)
-    if result.empty:
-        raise ValueError("No annotated QC-passing 24-hour fields")
-    path = artifacts.export_parquet
-    atomic_write(path, lambda p: result.to_parquet(p, compression="zstd", index=False))
+        if outputs[name].density is not None:
+            plots.plot_counts(
+                training_coverage(frame)[["FOVs"]],
+                outputs[name].figures / "preparation_retention.png",
+                f"{name}: QC-passing annotated training fields by timepoint",
+            )
     qc_counts = qc.assign(passing=passing).groupby("Metadata_Plate").passing.agg(["size", "sum"])
     qc_counts.columns = ["Before QC", "After QC"]
-    stagecounts = pd.DataFrame(
-        stages,
-        index=pd.Index(r.PLATES, name="Metadata_Plate"),
-        columns=["Raw", "TIFF complete", "QC passed", "24 h", "Annotated"],
+    for output in outputs.values():
+        plots.plot_counts(
+            qc_counts, output.figures / "qc_retention.png", "QC: six plates before TIFF/cohort"
+        )
+    if "reference" in outputs:
+        stagecounts = pd.DataFrame(
+            stages,
+            index=pd.Index(r.PLATES, name="Metadata_Plate"),
+            columns=["Raw", "TIFF complete", "QC passed", "24 h", "Annotated"],
+        )
+        plots.plot_counts(
+            stagecounts,
+            artifacts.figures / "preparation_retention.png",
+            "24 h cohort exclusion is NOT QC failure",
+        )
+    return {name: output.export_parquet for name, output in outputs.items()}
+
+
+def training_coverage(frame: pd.DataFrame) -> pd.DataFrame:
+    """Count FOVs and distinct acquisition wells, including absent timepoints."""
+    fields = frame.groupby("time_point").size().rename("FOVs")
+    wells = (
+        frame.drop_duplicates(["Metadata_Plate", "Metadata_Well"])
+        .groupby("time_point")
+        .size()
+        .rename("Wells")
     )
-    figures = artifacts.figures
-    plots.plot_counts(qc_counts, figures / "qc_retention.png", "QC: six plates before TIFF/cohort")
-    title = "24 h cohort exclusion is NOT QC failure"
-    plots.plot_counts(stagecounts, figures / "preparation_retention.png", title)
-    return path
+    return pd.concat([fields, wells], axis=1).reindex(r.TRAIN_TIME_POINTS, fill_value=0)
