@@ -25,6 +25,7 @@ dependencies = [
     "scikit-learn",
     "umap-learn>=0.5.7,<0.6",
     "matplotlib",
+    "microfilm>=0.4",
     "scikit-image",
     "torchmetrics",
     "lightning",

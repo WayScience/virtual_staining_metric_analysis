@@ -13,6 +13,8 @@ FIELD_KEYS = ["Metadata_Plate", "Metadata_Well", "Metadata_Site"]  # unique FOV 
 PIXEL_SIZE_UM = 0.593  # helps with scale bar when visualizing images
 PLATES = tuple(f"BR{number:08d}" for number in range(143976, 143982))  # only pedcp batch 1 plates
 CHANNELS = ("OrigER", "OrigRNA", "OrigAGP", "OrigMito", "OrigDNA", "OrigBrightfield")
+# Source/QC columns stay Orig*; corrected collection planes are named Illum*.
+CORRECTED_CHANNELS = {channel: f"Illum{channel.removeprefix('Orig')}" for channel in CHANNELS}
 
 # Degradation specific filtering and settings
 DATASET_ID = "pedcp90-reference"  # naming the reference write

@@ -66,7 +66,8 @@ def plan(
     channels: list[str] | None = None, 
     pixel_size_um: float | None = None, 
     skip_missing_outlines: bool = False,
-    illumination: dict | None = None
+    illumination: dict | None = None,
+    output_channels: dict[str, str] | None = None,
 ):
     """
     Resolve all image+segmentation masks file path and validate against duplicate FOVs.
@@ -76,6 +77,7 @@ def plan(
     :param dataset_id: Stable, nonempty acquisition namespace
     :param image_root: Root directory for relative image paths
     :param channels: List of channel names corresponding to FileName_* columns
+    :param output_channels: Optional source-to-export channel name mapping (part of the fingerprint)
     :param pixel_size_um: Physical pixel size in micrometers
     :param skip_missing_outlines: Whether to skip FOVs missing outlines
     :return: List of resolved FOV rows with absolute paths
@@ -89,6 +91,12 @@ def plan(
     channels = list(channels) if channels is not None else sorted(c[9:] for c in df if c.startswith('FileName_'))
     if not channels or len(channels) != len(set(channels)) or set(channels) & {'CellsOutlines', 'NucleiOutlines'}:
         raise ValueError('Supply distinct channel names or FileName_* columns')
+    if output_channels is not None:
+        names = list(output_channels.values())
+        if (set(output_channels) != set(channels) or len(set(names)) != len(names)
+                or any(not isinstance(name, str) or not name.strip() for name in names)
+                or set(names) & {'cells', 'nuclei'}):
+            raise ValueError('output_channels must map every input channel to a distinct nonempty name')
     if pixel_size_um is not None and (not np.isfinite(pixel_size_um) or pixel_size_um <= 0):
         raise ValueError('pixel_size_um must be positive')
     root = Path(outline_root).expanduser().resolve()
@@ -159,6 +167,8 @@ def plan(
                 'illumination': corrections,
                 'pixel_size_um': pixel_size_um,
             }
+            if output_channels is not None:
+                item['output_channels'] = dict(output_channels)
             item['fingerprint'] = digest([VERSION, item])
             rows.append(item)
         except (ValueError, TypeError, OSError) as exc:
@@ -365,7 +375,8 @@ def _reference_payload(item: dict) -> ShardPayload:
     registry, pixels = [], {}
     for role, data in [('intensity', arrays), ('labels', masks)]:
         for name, arr in data.items():
-            image_id = 'img_' + digest([fov_id, role, name, mask_set_id if role == 'labels' else 'reference'])[:24]
+            output_name = item.get('output_channels', {}).get(name, name) if role == 'intensity' else name
+            image_id = 'img_' + digest([fov_id, role, output_name, mask_set_id if role == 'labels' else 'reference'])[:24]
             pixels[image_id] = arr
             registry.append({
                 'image_id': image_id,
@@ -374,7 +385,7 @@ def _reference_payload(item: dict) -> ShardPayload:
                 'reference_image_id': image_id,
                 'mask_set_id': mask_set_id,
                 'role': role,
-                'channel': name,
+                'channel': output_name,
                 'variant': 'reference',
                 'dtype': str(arr.dtype),
                 'intensity_scale': 'raw' if role == 'intensity' else 'labels',
@@ -415,7 +426,8 @@ def ingest(
     limit: int | None = None, 
     dry_run: bool = False, 
     skip_missing_outlines: bool = False,
-    illumination: dict | None = None
+    illumination: dict | None = None,
+    output_channels: dict[str, str] | None = None,
 ) -> pd.DataFrame:
     """
     Preflight all inputs, then ingest. Rerun identical command to resume.
@@ -426,6 +438,7 @@ def ingest(
     :param dataset_id: Identifier for the dataset.
     :param image_root: Root directory containing image files (optional).
     :param channels: List of channels to ingest (optional).
+    :param output_channels: Optional source-to-export names; source paths and correction keys stay unchanged.
     :param pixel_size_um: Pixel size in micrometers (optional).
     :param workers: Number of worker threads to use.
     :param limit: Limit the number of items to ingest (optional).
@@ -445,7 +458,8 @@ def ingest(
         channels=channels,
         pixel_size_um=pixel_size_um,
         skip_missing_outlines=skip_missing_outlines,
-        illumination=illumination
+        illumination=illumination,
+        output_channels=output_channels,
     )
     
     if limit is not None:

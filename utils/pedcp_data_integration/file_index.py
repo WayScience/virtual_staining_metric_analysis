@@ -186,15 +186,23 @@ def prepare_file_index(config, *, cohort="all") -> dict[str, Path]:
             qc_counts, output.figures / "qc_retention.png", "QC: six plates before TIFF/cohort"
         )
     if "reference" in outputs:
+        timepoints = barcode.set_index("barcode").time_point
         stagecounts = pd.DataFrame(
             stages,
-            index=pd.Index(r.PLATES, name="Metadata_Plate"),
-            columns=["Raw", "TIFF complete", "QC passed", "24 h", "Annotated"],
+            index=pd.Index(
+                [f"{plate} ({timepoints[plate]:g} h)" for plate in r.PLATES],
+                name="Acquisition plate (imaging timepoint)",
+            ),
+            columns=[
+                "Raw", "TIFF complete", "QC passed",
+                f"Select imaging timepoint\n{r.TIME_POINT:g} h only (cohort filter)",
+                "Annotated",
+            ],
         )
         plots.plot_counts(
             stagecounts,
             artifacts.figures / "preparation_retention.png",
-            "24 h cohort exclusion is NOT QC failure",
+            f"Reference preparation: QC followed by imaging-timepoint selection ({r.TIME_POINT:g} h)",
         )
     return {name: output.export_parquet for name, output in outputs.items()}
 

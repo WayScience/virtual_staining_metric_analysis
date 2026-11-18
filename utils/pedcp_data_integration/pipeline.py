@@ -14,6 +14,7 @@ from utils.pedcp_data_integration.file_index import prepare_file_index as prepar
 from utils.pedcp_data_integration.file_index import training_coverage
 from utils.pedcp_data_integration.recipe import (
     CHANNELS,
+    CORRECTED_CHANNELS,
     ILLUMINATION_METHODS,
     PIXEL_SIZE_UM,
 )
@@ -51,6 +52,7 @@ def _ingest_collection(config, artifacts, *, dry_run):
         dataset_id=artifacts.dataset_id,
         illumination=illumination,
         channels=list(CHANNELS),
+        output_channels=CORRECTED_CHANNELS,
         image_root=config.image_root,
         pixel_size_um=PIXEL_SIZE_UM,
         workers=config.workers,

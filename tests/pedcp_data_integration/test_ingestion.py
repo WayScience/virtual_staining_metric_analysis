@@ -256,6 +256,9 @@ def test_ingest_dryrun_resume_pixels_and_mount_free_report(synthetic, monkeypatc
     collection = MicroscopyCollection(a.collection)
     planes = collection.read_fov(collection.fovs.fov_id.iloc[0], normalize=False)
     assert len(planes) == 8
+    assert {channel for role, channel in planes if role == "intensity"} == {
+        "IllumER", "IllumRNA", "IllumAGP", "IllumMito", "IllumDNA", "IllumBrightfield"
+    }
     for (role, channel), plane in planes.items():
         expected = (
             synthetic.pixels.astype(np.float32)
@@ -412,13 +415,13 @@ def test_training_selection_independent_resume_and_offline_report(training_synth
     region = (slice(y - 4, y + 4), slice(x - 4, x + 4))
     planes = collection.read_fov(fov_id, normalize=False)
     assert set(planes) == {
-        *(("intensity", channel) for channel in r.CHANNELS),
+        *(("intensity", channel) for channel in r.CORRECTED_CHANNELS.values()),
         ("labels", "cells"),
         ("labels", "nuclei"),
     }
     crops = {key: plane[region] for key, plane in planes.items()}
     assert all(crop.shape == (8, 8) for crop in crops.values())
-    for channel in r.CHANNELS:
+    for channel in r.CORRECTED_CHANNELS.values():
         np.testing.assert_array_equal(
             crops["intensity", channel], training_synthetic.pixels[region]
         )
