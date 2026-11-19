@@ -1,4 +1,10 @@
-"""Immutable, per-FOV OME-Arrow ingestion. No intensity normalization."""
+"""
+Adapt LoadData TIFFs and binary outlines into immutable per-FOV payloads.
+
+There are three stages: plan() resolves/validates sources without writing;
+_reference_payload() reads pixels, applies optional corrections, and reconstructs
+objects; ingest() delegates storage/resume to writer.run_collection().
+"""
 
 from __future__ import annotations
 
@@ -23,12 +29,13 @@ OBJECT_COLUMNS = ['object_id','fov_id','mask_set_id','compartment','label','cent
 
 
 def digest(value: dict) -> str:
-    """Compute a SHA-256 digest of a dictionary."""
+    """Hash JSON-serializable identity/provenance values in deterministic key order."""
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
 def token(value: str | float) -> str:
     """Normalize and validate an identity field for identity columns."""
+    # Match numeric identities across CSV/Parquet without stripping string leading zeros.
     if pd.isna(value):
         raise ValueError('Missing identity field')
     if isinstance(value, (float, np.floating)) and value.is_integer():
@@ -40,7 +47,7 @@ def token(value: str | float) -> str:
 
 
 def read_inputs(inputs: pd.DataFrame | str | Path | list[str | Path]) -> pd.DataFrame:
-    """Read input metadata from a DataFrame or file paths"""
+    """Copy a supplied frame or concatenate LoadData files in their input order."""
     if isinstance(inputs, pd.DataFrame):
         return inputs.copy()
     if isinstance(inputs, (str, Path)):
@@ -48,6 +55,7 @@ def read_inputs(inputs: pd.DataFrame | str | Path | list[str | Path]) -> pd.Data
     frames = []
     for path in inputs:
         p = Path(path)
+        # Preserve CSV identifiers such as site '01'; Parquet retains its stored types.
         if p.suffix.lower() in {'.parquet', '.pq'}:
             frames.append(pd.read_parquet(p))
         else:
@@ -70,7 +78,12 @@ def plan(
     output_channels: dict[str, str] | None = None,
 ):
     """
-    Resolve all image+segmentation masks file path and validate against duplicate FOVs.
+    Resolve sources and fingerprint eligible FOVs without writing output.
+
+    Global argument errors fail immediately. Per-row errors are collected so one
+    preflight reports multiple bad inputs; no plan is returned if any row fails.
+    Missing outlines alone may be skipped. TIFF pixel/shape validation is deferred
+    to payload production, whereas illumination arrays are validated here.
 
     :param inputs: CSV or Parquet paths or a DataFrame containing FOV metadata
     :param outline_root: Root directory containing segmentation mask files
@@ -80,8 +93,10 @@ def plan(
     :param output_channels: Optional source-to-export channel name mapping (part of the fingerprint)
     :param pixel_size_um: Physical pixel size in micrometers
     :param skip_missing_outlines: Whether to skip FOVs missing outlines
+    :param illumination: Optional (plate, source channel) -> (npy path, method) mapping
     :return: List of resolved FOV rows with absolute paths
     """
+    # Validate shared options once, before any row-specific path resolution.
     if not dataset_id:
         raise ValueError('dataset_id must be a stable, nonempty acquisition namespace')
     df = read_inputs(inputs)
@@ -103,13 +118,18 @@ def plan(
     rows, seen, errors = [], set(), []
     skipped = 0
     for index, row in df.iterrows():
+        # Catch only expected input errors per row; unexpected programming errors propagate.
         try:
+            # Canonical acquisition keys drive identity and duplicate detection, even
+            # for rows that might subsequently be skipped for missing outlines.
             plate, well, site = (token(row[k]) for k in KEYS)
             key = (plate, well, site)
             if key in seen:
                 raise ValueError(f'Duplicate FOV {key}; include only one acquisition per dataset')
             seen.add(key)
             paths = {}
+            # Resolve in precedence order: absolute filename, PathName + filename,
+            # then image_root. No pixel arrays are read during this path pass.
             for ch in channels:
                 filename = row.get('FileName_' + ch)
                 if pd.isna(filename) or not str(filename).strip():
@@ -133,12 +153,15 @@ def plan(
                     raise FileNotFoundError(f'Missing intensity image: {paths[ch]}')
             missing_outlines = [paths[k] for k in ('CellsOutlines', 'NucleiOutlines')
                                 if not Path(paths[k]).is_file()]
+            # Only outline absence is optional; missing source intensities already failed.
             if missing_outlines:
                 if skip_missing_outlines:
                     skipped += 1
                     continue
                 raise FileNotFoundError('Missing outlines: ' + ', '.join(missing_outlines))
             corrections = {}
+            # Cache validated fields by file stat. Each eligible channel must have a
+            # mapping when correction is requested; silently mixing raw/corrected is unsafe.
             if illumination is not None:
                 for ch in channels:
                     if (plate, ch) not in illumination:
@@ -169,10 +192,13 @@ def plan(
             }
             if output_channels is not None:
                 item['output_channels'] = dict(output_channels)
+            # Resume identity includes metadata, export names, correction settings,
+            # and source stats; FOV identity itself remains acquisition-based.
             item['fingerprint'] = digest([VERSION, item])
             rows.append(item)
         except (ValueError, TypeError, OSError) as exc:
             errors.append(f'row {index}: {exc}')
+    # Report tolerated exclusions separately from errors that invalidate the whole plan.
     if skipped:
         warnings.warn(
             f'Skipped {skipped} FOVs missing cell and/or nuclear outline files; '
@@ -203,9 +229,11 @@ def read_2d(path: str | Path):
 
 def read_outline(path: str | Path) -> np.ndarray:
     """
-    Read binary outlines as YX bool. 
-    The pre-computed profiling data for this project saves outlines as RGB TIFFs (only G channel is used),
-        and this function does best guess 3 channel binarization to extract the outline.
+    Read strictly binary grayscale/RGB(A) outlines as a YX boolean array.
+
+    PedCP outlines typically use only the green channel. Empty color channels are
+    ignored; all nonempty channels must encode the same boundary. This is format
+    validation, not thresholding of arbitrary RGB intensities.
 
     :param path: Path to the outline TIFF file
     :return: 2D boolean array where True indicates outline pixels
@@ -217,6 +245,7 @@ def read_outline(path: str | Path) -> np.ndarray:
         is_rgb = tif.pages[0].photometric == 2
     if arr.dtype.kind not in 'buif' or not np.isfinite(arr).all():
         raise ValueError(f'Unsupported or nonfinite outline pixels: {path}')
+    # Normalize supported layouts into channel-first planes without interpreting color.
     if is_rgb:
         if arr.ndim != 3 or axes not in ('YXS', 'SYX'):
             raise ValueError(f'Unsupported RGB outline layout {axes} {arr.shape}: {path}')
@@ -225,6 +254,7 @@ def read_outline(path: str | Path) -> np.ndarray:
             raise ValueError(f'Expected RGB or RGBA outline: {path}')
         planes = planes[:3]  # An opaque alpha channel is not a boundary.
     else:
+        # Grayscale stacks are accepted only when they repeat the same 2D boundary.
         arr = np.squeeze(arr)
         if arr.ndim == 3 and axes.endswith('YX'):
             if not np.all(arr == arr[0]):
@@ -233,6 +263,7 @@ def read_outline(path: str | Path) -> np.ndarray:
         if arr.ndim != 2:
             raise ValueError(f'Unsupported outline layout {axes} {arr.shape}: {path}')
         planes = arr[None, ...]
+    # Accept a blank outline, but reject ambiguous values or conflicting RGB boundaries.
     boundary = np.zeros(planes.shape[1:], dtype=bool)
     found = False
     for plane in planes:
@@ -252,9 +283,9 @@ def read_outline(path: str | Path) -> np.ndarray:
 def outlines_to_labels(outline: np.ndarray) -> np.ndarray:
     """
     Convert binary outlines to labeled interiors.
-    Helps converts the outlines as instance segmentation masks.
-    Assumes outlines are closed, 4-connected and no two objects can overlap and
-        have outlines intersecting each other, which is the case for this project's data.
+    Assumes closed boundaries with nonintersecting object interiors. Fill enclosed
+    regions, remove boundary pixels, then label interiors using 4-connectivity.
+    Labels are reconstructed identities, not original CellProfiler object IDs.
 
     :param outline: 2D binary array of outline pixels
     :return: 2D array of labeled interiors (uint32)
@@ -268,7 +299,9 @@ def outlines_to_labels(outline: np.ndarray) -> np.ndarray:
 
 
 def objects_for(labels: np.ndarray, compartment: str, fov_id: str, mask_set_id: str) -> list[dict]:
+    """Measure label geometry in full-FOV coordinates, with half-open bounding boxes."""
     rows = []
+    # Work within each label's bounding box; centroid offsets restore full-FOV coordinates.
     for label, box in enumerate(ndi.find_objects(labels), 1):
         if box is None:
             continue
@@ -299,6 +332,9 @@ def relationships(nuclei: np.ndarray, cells: np.ndarray, mask_set_id: str) -> li
     """
     Compute relationships between nuclei and cells based on overlap.
 
+    Retain every nonzero overlap, marking the largest-overlap cell for each nucleus.
+    Ties keep the first pair encountered; nuclei with no overlap have no row.
+
     :param nuclei: 2D array of labeled nuclei
     :param cells: 2D array of labeled cells
     :param mask_set_id: Identifier for the mask set
@@ -306,9 +342,11 @@ def relationships(nuclei: np.ndarray, cells: np.ndarray, mask_set_id: str) -> li
     """
     rows = []
     sizes = np.bincount(nuclei.ravel())
+    # Count pixel intersections once, excluding background from both compartments.
     valid = (nuclei > 0) & (cells > 0)
     pairs, counts = np.unique(np.stack([nuclei[valid],cells[valid]], axis=1), axis=0, return_counts=True)
     best = {}
+    # Select matches first, then emit all candidates with fractions of the whole nucleus.
     for (n,c), count in zip(pairs, counts):
         if n not in best or count > best[n][1]:
             best[n] = (c,count)
@@ -337,6 +375,7 @@ def write_table(rows: list[dict], path: str, columns: list[str] | None = None):
 
 @lru_cache(maxsize=36)
 def _illumination_array(path, size, mtime_ns, method):
+    """Load a read-only float32 field; stat arguments invalidate cached file versions."""
     field = np.asarray(np.load(path, allow_pickle=False), dtype=np.float32)
     if field.ndim != 2 or not field.size or not np.isfinite(field).all():
         raise ValueError(f'Invalid illumination array: {path}')
@@ -347,9 +386,11 @@ def _illumination_array(path, size, mtime_ns, method):
 
 
 def _correct_plane(image, field, method):
+    """Apply a validated subtract/divide field, retaining float32 raw-scale intensities."""
     if image.dtype != np.uint16 or image.shape != field.shape:
         raise ValueError('Correction requires uint16 TIFF and matching YX illumination shape')
     result = image.astype(np.float32)
+    # Subtraction fields use CellProfiler's 0-1 scale; division fields are dimensionless.
     if method == 'subtract':
         result -= np.float32(65535) * field
     else:
@@ -359,6 +400,7 @@ def _correct_plane(image, field, method):
 
 def _reference_payload(item: dict) -> ShardPayload:
     """TIFF/outline adapter; storage is delegated to the shared writer."""
+    # Read source-named planes and correct before applying any export-name mapping.
     fov_id = item['fov_id']
     arrays = {ch: read_2d(item['paths'][ch]) for ch in item['channels']}
     for ch, correction in item.get('illumination', {}).items():
@@ -367,11 +409,15 @@ def _reference_payload(item: dict) -> ShardPayload:
         field = _illumination_array(item['paths'][key], stats['size'],
                                     stats['mtime_ns'], correction['method'])
         arrays[ch] = _correct_plane(arrays[ch], field, correction['method'])
+    # Reconstruct aligned interiors. Hash their contents so object IDs identify this
+    # particular reconstruction, rather than claiming original CellProfiler identities.
     shape = next(iter(arrays.values())).shape
     masks = {kind: outlines_to_labels(read_outline(item['paths'][prefix+'Outlines'])) for kind,prefix in [('cells','Cells'),('nuclei','Nuclei')]}
     if any(a.shape != shape for a in [*arrays.values(),*masks.values()]):
         raise ValueError(f'{fov_id}: image/mask shapes differ')
     mask_set_id = 'mask_' + digest([fov_id, {k:hashlib.sha256(a.tobytes()).hexdigest() for k,a in masks.items()}, 'interiors-4conn-v1'])[:24]
+    # Separate intensity/label roles while keeping registry IDs paired with arrays.
+    # Export names change stored channel identity, not correction/provenance source keys.
     registry, pixels = [], {}
     for role, data in [('intensity', arrays), ('labels', masks)]:
         for name, arr in data.items():
@@ -395,11 +441,13 @@ def _reference_payload(item: dict) -> ShardPayload:
                 'height': shape[0],
                 'width': shape[1],
             })
+    # Build small queryable tables alongside preserved, uncoerced LoadData metadata.
     objs = [r for kind,mask in masks.items() for r in objects_for(mask,kind,fov_id,mask_set_id)]
     rels = relationships(masks['nuclei'], masks['cells'], mask_set_id)
     fov = {k:item[k] for k in ('dataset_id','fov_id','plate','well','site','pixel_size_um')}
     fov.update({k: str(v) for k, v in item['metadata'].items() if k.startswith('Metadata_')})
     fov.update(height=shape[0],width=shape[1],mask_set_id=mask_set_id,metadata_json=json.dumps(item['metadata']))
+    # Detect source stat changes since preflight before handing pixels to the writer.
     for key, path in item['paths'].items():
         st = Path(path).stat()
         if {'size': st.st_size, 'mtime_ns': st.st_mtime_ns} != item['source_stats'][key]:
@@ -432,7 +480,7 @@ def ingest(
     """
     Preflight all inputs, then ingest. Rerun identical command to resume.
     
-    :param inputs: List of input files or directories to ingest.
+    :param inputs: LoadData CSV/Parquet paths or a DataFrame accepted by plan().
     :param outline_root: Root directory containing outline files.
     :param output: Directory to write the ingested output.
     :param dataset_id: Identifier for the dataset.
@@ -462,12 +510,15 @@ def ingest(
         output_channels=output_channels,
     )
     
+    # Limit the selected writes only after validating the complete supplied input.
     if limit is not None:
         items = items[:limit]
     if not items:
         return pd.DataFrame(columns=['fov_id', 'plate', 'well', 'site', 'channels'])
     if dry_run:
         return pd.DataFrame([{'fov_id':i['fov_id'],'plate':i['plate'],'well':i['well'],'site':i['site'],'channels':i['channels']} for i in items])
+    # Dry-run exits above without creating a collection. The writer owns locks,
+    # immutable-spec checks, per-FOV resume, and collection completion from here on.
     spec = {'version': VERSION, 'dataset_id': dataset_id,
             'items': {i['fov_id']: i['fingerprint'] for i in items}}
     by_id = {i['fov_id']: i for i in items}
@@ -477,12 +528,14 @@ def ingest(
 def load_plane(root, image_id, *, normalize=False):
     """Load a YX plane from a completed collection; optionally /65535 intensities."""
     from ome_arrow import OMEArrowDataset
+    # Resolve through the registry rather than assuming pixels are stored locally.
     rows = pq.read_table(Path(root)/'image_registry.parquet', filters=[('image_id','=',image_id)]).to_pylist()
     if len(rows)!=1:
         raise KeyError(image_id)
     row = rows[0]
     arr = OMEArrowDataset(Path(root)/row['ome_arrow_uri']).read_image(image_id)[0,0,0]
     if normalize:
+        # Never scale label identities, even though labels are numeric arrays too.
         if row['role'] != 'intensity':
             raise ValueError('Segmentation labels must not be normalized')
         arr = arr.astype(np.float32)/np.float32(65535)

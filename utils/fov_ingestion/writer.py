@@ -1,4 +1,12 @@
-"""Storage-only backend shared by reference ingestion and derived collections."""
+"""
+Storage-only backend shared by reference ingestion and derived collections.
+
+Callers supply ShardPayload objects for writing.
+This module has a collection lock that protects the write, 
+    plus per-FOV staging prevents partially published shards, and a final completion marker
+    is published only after the collection catalogs have been rebuilt successfully.
+"""
+
 from __future__ import annotations
 
 import fcntl
@@ -20,11 +28,17 @@ import pyarrow.parquet as pq
 
 
 def digest(value) -> str:
+    """Hash the JSON specification deterministically for completion validation."""
     return hashlib.sha256(json.dumps(value, sort_keys=True, separators=(',', ':'), allow_nan=False).encode()).hexdigest()
 
 
 @dataclass
 class ShardPayload:
+    """Adapter-to-storage contract: pixels, catalogs, provenance, and optional counts.
+
+    arrays is keyed by image ID, matching registry rows for this FOV's local URI.
+    Other registry rows may refer to external label planes rather than local arrays.
+    """
     # Only locally owned pixels. Registry may additionally link external masks.
     arrays: dict[str, np.ndarray]
     registry: pd.DataFrame
@@ -36,36 +50,60 @@ class ShardPayload:
 
 
 def write_shard(output, fov_id, fingerprint, produce: Callable[[], ShardPayload]):
-    """Resume or stage, verify, then atomically commit a complete FOV."""
+    """
+    Resume or stage, verify, then atomically commit a complete FOV.
+
+    :param output: The root output directory for FOVs.
+    :param fov_id: The ID of the FOV being written.
+    :param fingerprint: A fingerprint representing the inputs for this FOV.
+    :param produce: A callable that produces the ShardPayload for this FOV.
+        This dependency injection point keeps source-specific processing outside the writer.
+        It is called only when an identical completed shard cannot be resumed.
+    :return: A dictionary containing completion information, including whether the operation was resumed.
+    """
     from ome_arrow import OMEArrowDataset, from_numpy, write_ome_arrow_dataset
 
     if Path(fov_id).name != fov_id or fov_id in ('.', '..'):
         raise ValueError('Invalid FOV ID')
     parent = Path(output) / 'fovs'
     dest = parent / fov_id
+
+    # Resume without reading source pixels; changed fingerprints must not overwrite data.
     if dest.exists():
         done = json.loads((dest / 'complete.json').read_text())
         if done['fingerprint'] != fingerprint:
             raise ValueError(f'{fov_id}: inputs changed; use a new output collection')
         return {**done, 'resumed': True}
+    # Stage beside the destination so the final rename stays on the same filesystem.
     tmp = parent / ('.' + fov_id + '.' + uuid.uuid4().hex)
     tmp.mkdir()
+
     start = time.perf_counter()
+
+    # This try/finally is a staging transaction: produce, validate, write, verify,
+    # then publish. Any exception propagates, with only this attempt's staging removed.
     try:
+        # Produce the shard payload
         payload = produce()
         if payload.registry.image_id.duplicated().any():
             raise ValueError('Duplicate image IDs in shard')
+
+        # Validate the registry and FOV metadata.
         registry = payload.registry.set_index('image_id')
         if len(payload.fov) != 1 or payload.fov.iloc[0]['fov_id'] != fov_id:
             raise ValueError('FOV metadata identity mismatch')
         shape = (int(payload.fov.iloc[0]['height']), int(payload.fov.iloc[0]['width']))
         size = payload.fov.iloc[0]['pixel_size_um']
         size = None if pd.isna(size) else float(size)
+
+        # Require exactly the arrays owned by this shard; linked planes are not copied.
         records = []
         local_uri = f'fovs/{fov_id}/pixels.ome-arrow'
         local_ids = set(payload.registry.loc[payload.registry.ome_arrow_uri.eq(local_uri), 'image_id'])
         if local_ids != set(payload.arrays):
             raise ValueError('Local pixel arrays and registry differ')
+
+        # Validate each local plane and preserve its dtype, channel name, and calibration.
         for image_id, arr in payload.arrays.items():
             row = registry.loc[image_id]
             if arr.ndim != 2 or arr.shape != shape or arr.dtype.kind not in 'buif' or not np.isfinite(arr).all():
@@ -81,8 +119,12 @@ def write_shard(output, fov_id, fingerprint, produce: Callable[[], ShardPayload]
                 physical_size_x=size or 1., physical_size_y=size or 1.,
                 physical_size_unit='µm' if size else 'pixel',
             ))
+
+        # A shard containing only links cannot supply a local pixel dataset.
         if not records:
             raise ValueError('Cannot write an empty pixel shard')
+
+        # Read back every stored plane before publishing; lossy dtype conversion is an error.
         write_ome_arrow_dataset(records, tmp / 'pixels.ome-arrow', pixel_dtype=None, compression='zstd')
         stored = OMEArrowDataset(tmp / 'pixels.ome-arrow')
         for image_id, arr in payload.arrays.items():
@@ -90,6 +132,7 @@ def write_shard(output, fov_id, fingerprint, produce: Callable[[], ShardPayload]
             if actual.dtype != arr.dtype or not np.array_equal(actual, arr):
                 raise RuntimeError(f'Pixel round-trip failed: {image_id}')
         del stored
+        # Sidecars travel with the pixels, so a published shard is independently resumable.
         for name, table in [('fov', payload.fov), ('image_registry', payload.registry),
                             ('objects', payload.objects), ('relationships', payload.relationships)]:
             table.to_parquet(tmp / f'{name}.parquet', index=False)
@@ -99,19 +142,27 @@ def write_shard(output, fov_id, fingerprint, produce: Callable[[], ShardPayload]
                 'bytes_written': sum(p.stat().st_size for p in tmp.rglob('*') if p.is_file()),
                 'resumed': False}
         (tmp / 'complete.json').write_text(json.dumps(done, indent=2))
+        # Only this rename exposes the complete shard at its final path.
         tmp.rename(dest)
         return done
     finally:
+        # After success tmp no longer exists; after failure dest remains unpublished.
         if tmp.exists():
             shutil.rmtree(tmp)
 
 
 def run_collection(output, spec, produce, *, workers=1):
-    """One coordinator owns a collection; producer receives one FOV ID."""
+    """Lock, resume/write shards in parallel, rebuild catalogs, then mark completion.
+
+    spec contains the dataset/version and selected FOV fingerprints. Existing
+    collections must match it exactly. produce(fov_id) supplies source-specific
+    payloads only for missing shards; completed shards survive a failed run.
+    """
     if workers < 1 or not spec['items']:
         raise ValueError('Positive workers and nonempty FOV selection required')
     output = Path(output).resolve()
     output.mkdir(parents=True, exist_ok=True)
+    # One coordinator owns both shard publication and collection-wide catalogs.
     lock = output / '.ingest.lock'
     fd = os.open(lock, os.O_CREAT | os.O_RDWR, 0o666)
     try:
@@ -119,6 +170,7 @@ def run_collection(output, spec, produce, *, workers=1):
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
         os.ftruncate(fd, 0)
         os.write(fd, str(os.getpid()).encode())
+        # Refuse to mix selections/configurations or adopt an unrecognized directory.
         config = output / 'collection.json'
         if config.exists():
             if json.loads(config.read_text()) != spec:
@@ -131,16 +183,20 @@ def run_collection(output, spec, produce, *, workers=1):
             tmp.write_text(json.dumps(spec, indent=2))
             tmp.replace(config)
         (output / 'fovs').mkdir(exist_ok=True)
+        # Until all catalogs are rebuilt, readers must not regard this run as complete.
         success = output / '_SUCCESS'
         success.unlink(missing_ok=True)
         def process(fov_id):
             return write_shard(output, fov_id, spec['items'][fov_id], lambda: produce(fov_id))
+        # Workers own distinct FOV directories; the coordinator collects results/errors.
         results = []
         with ThreadPoolExecutor(max_workers=workers) as pool:
             for result in pool.map(process, spec['items']):
                 results.append(result)
                 print(f"[{len(results)}/{len(spec['items'])}] {result['fov_id']} "
                       f"{result['elapsed_seconds']:.2f}s resumed={result['resumed']}", flush=True)
+        # Merge sidecars only after every shard succeeds. Unify optional-column types
+        # first, then stream one shard at a time instead of loading all tables together.
         for filename in ('fov.parquet', 'image_registry.parquet', 'objects.parquet', 'relationships.parquet'):
             paths = [output / 'fovs' / fov_id / filename for fov_id in spec['items']]
             schema = pa.unify_schemas([pq.read_schema(p) for p in paths], promote_options='permissive')
@@ -150,6 +206,8 @@ def run_collection(output, spec, produce, *, workers=1):
                 for path in paths:
                     writer.write_table(pq.read_table(path).cast(schema))
             tmp.replace(output / name)
+        # Atomic file replacement protects each catalog, not the whole catalog set;
+        # _SUCCESS is therefore the final collection-level publication boundary.
         pd.DataFrame(results).to_parquet(output / 'timings.parquet.tmp', index=False)
         (output / 'timings.parquet.tmp').replace(output / 'timings.parquet')
         (output / '_SUCCESS.tmp').write_text(digest(spec))

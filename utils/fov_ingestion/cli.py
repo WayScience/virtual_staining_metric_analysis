@@ -1,9 +1,15 @@
+"""
+Thin command-line adapter for generic LoadData/outline ingestion.
+"""
+
 import argparse
 
 from utils.fov_ingestion.ingest import ingest
 
 
 def main():
+    """Parse CLI options and report either preflight rows or ingestion results."""
+    # Argument names mirror ingest() keywords, so no second configuration layer is needed.
     p = argparse.ArgumentParser(description='Ingest LoadData and binary outlines into immutable OME-Arrow FOV shards.')
     p.add_argument('inputs', nargs='+', help='CSV or Parquet paths (shell glob expansion supported)')
     p.add_argument('--outline-root', required=True)
@@ -18,6 +24,7 @@ def main():
     p.add_argument('--skip-missing-outlines', action='store_true',
                    help='Exclude FOVs missing either cell or nuclear outline TIFFs')
     args = vars(p.parse_args())
+    # The backend owns dry-run/resume semantics; keep this adapter free of I/O policy.
     result = ingest(**args)
     print(result.to_string(index=False))
 
