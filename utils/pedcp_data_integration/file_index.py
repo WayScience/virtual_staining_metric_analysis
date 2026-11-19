@@ -140,7 +140,8 @@ def prepare_file_index(config, *, cohort="all") -> dict[str, Path]:
                 & training.time_point.isin(r.TRAIN_TIME_POINTS)
                 & training.seeding_density.eq(output.density)
             ]
-    stages, selected = [], {name: [] for name in outputs}
+    stages = {name: [] for name in outputs}
+    selected = {name: [] for name in outputs}
     for plate in r.PLATES:
         raw = pd.read_csv(artifacts.raw / f"loaddatas/{plate}_concatenated.csv")
         if set(raw.Metadata_Plate) != {plate}:
@@ -151,13 +152,19 @@ def prepare_file_index(config, *, cohort="all") -> dict[str, Path]:
             raise ValueError(f"Missing QC coverage: {plate}")
         good = valid.loc[keys.isin(qc_keys[passing])]
         for name, annotation in annotations.items():
-            timed = good.loc[good.Metadata_Plate.isin(annotation.Metadata_Plate)]
-            annotated = timed.merge(
+            if outputs[name].density is None:
+                # Reference membership selects acquisition timepoint before annotation.
+                chosen = good.loc[good.Metadata_Plate.isin(annotation.Metadata_Plate)]
+            else:
+                # Training membership is well-specific (platemap, biology, density,
+                # and timepoint); count that selection separately from attaching metadata.
+                wells = pd.MultiIndex.from_frame(annotation[r.FIELD_KEYS[:2]])
+                chosen = good.loc[pd.MultiIndex.from_frame(good[r.FIELD_KEYS[:2]]).isin(wells)]
+            annotated = chosen.merge(
                 annotation, on=r.FIELD_KEYS[:2], validate="many_to_one", suffixes=(False, False)
             )
             selected[name].append(annotated)
-            if name == "reference":
-                stages.append((len(raw), len(valid), len(good), len(timed), len(annotated)))
+            stages[name].append((len(raw), len(valid), len(good), len(chosen), len(annotated)))
     # Validate every requested selection before replacing any prepared index.
     frames = {name: pd.concat(parts, ignore_index=True) for name, parts in selected.items()}
     for name, frame in frames.items():
@@ -168,42 +175,46 @@ def prepare_file_index(config, *, cohort="all") -> dict[str, Path]:
             if missing:
                 raise ValueError(f"{name}: no QC-passing fields at timepoints {sorted(missing)}")
             print(f"{name}: prepared coverage\n{training_coverage(frame).to_string()}")
+    timepoints = barcode.set_index("barcode").time_point
+    plate_labels = pd.Index(
+        [f"{plate} ({timepoints[plate]:g} h)" for plate in r.PLATES],
+        name="Acquisition plate (imaging timepoint)",
+    )
     for name, frame in frames.items():
         atomic_write(
             outputs[name].export_parquet,
             lambda p, frame=frame: frame.to_parquet(p, compression="zstd", index=False),
         )
-        if outputs[name].density is not None:
-            plots.plot_counts(
-                training_coverage(frame)[["FOVs"]],
-                outputs[name].figures / "preparation_retention.png",
-                f"{name}: QC-passing annotated training fields by timepoint",
+        output = outputs[name]
+        if output.density is None:
+            selection = f"Select imaging timepoint\n{r.TIME_POINT:g} h only (cohort filter)"
+            title = (
+                f"Reference preparation: QC followed by imaging-timepoint selection ({r.TIME_POINT:g} h)"
             )
+        else:
+            hours = ", ".join(f"{hour:g}" for hour in r.TRAIN_TIME_POINTS)
+            selection = (
+                f"Select training cohort\n{r.TRAIN_CELL_LINE}, density {output.density:g}\n"
+                f"{hours} h (cohort filter)"
+            )
+            title = f"{name}: preparation and cohort selection\n{r.TRAIN_PLATEMAP}"
+        plots.plot_counts(
+            pd.DataFrame(
+                stages[name], index=plate_labels,
+                columns=["Raw", "TIFF complete", "QC passed", selection, "Annotated"],
+            ),
+            output.figures / "preparation_retention.png",
+            title,
+        )
+        if output.density is not None:
+            # Retire duplicated pooled-QC figures from previous preparation runs.
+            (output.figures / "qc_retention.png").unlink(missing_ok=True)
     qc_counts = qc.assign(passing=passing).groupby("Metadata_Plate").passing.agg(["size", "sum"])
     qc_counts.columns = ["Before QC", "After QC"]
-    for output in outputs.values():
-        plots.plot_counts(
-            qc_counts, output.figures / "qc_retention.png", "QC: six plates before TIFF/cohort"
-        )
-    if "reference" in outputs:
-        timepoints = barcode.set_index("barcode").time_point
-        stagecounts = pd.DataFrame(
-            stages,
-            index=pd.Index(
-                [f"{plate} ({timepoints[plate]:g} h)" for plate in r.PLATES],
-                name="Acquisition plate (imaging timepoint)",
-            ),
-            columns=[
-                "Raw", "TIFF complete", "QC passed",
-                f"Select imaging timepoint\n{r.TIME_POINT:g} h only (cohort filter)",
-                "Annotated",
-            ],
-        )
-        plots.plot_counts(
-            stagecounts,
-            artifacts.figures / "preparation_retention.png",
-            f"Reference preparation: QC followed by imaging-timepoint selection ({r.TIME_POINT:g} h)",
-        )
+    # QC uses the same pooled source for every cohort; publish this diagnostic once.
+    plots.plot_counts(
+        qc_counts, artifacts.figures / "qc_retention.png", "Shared QC: source plates before TIFF/cohort selection"
+    )
     return {name: output.export_parquet for name, output in outputs.items()}
 
 

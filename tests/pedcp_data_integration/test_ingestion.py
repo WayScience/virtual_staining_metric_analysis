@@ -323,12 +323,14 @@ def test_all_cohort_dryrun_writes_nothing(training_synthetic):
     assert not any(a.collection.exists() for a in selected_artifacts(config).values())
 
 
-def test_training_selection_independent_resume_and_offline_report(training_synthetic):
+def test_training_selection_independent_resume_and_offline_report(training_synthetic, monkeypatch):
+    from unittest.mock import Mock
+
     import numpy as np
     import pandas as pd
 
     from utils.fov_ingestion.collection import MicroscopyCollection
-    from utils.pedcp_data_integration import pipeline
+    from utils.pedcp_data_integration import pipeline, plots
     from utils.pedcp_data_integration import recipe as r
     from utils.pedcp_data_integration.artifacts import Artifacts, selected_artifacts
 
@@ -357,7 +359,23 @@ def test_training_selection_independent_resume_and_offline_report(training_synth
         for path in (reference.collection / "fovs").rglob("*")
         if path.is_file()
     }
+    stale_qc = outputs["density_1000"].figures / "qc_retention.png"
+    stale_qc.parent.mkdir(parents=True, exist_ok=True)
+    stale_qc.touch()
+    plot_counts = Mock(wraps=plots.plot_counts)
+    monkeypatch.setattr(plots, "plot_counts", plot_counts)
     paths = pipeline.prepare(config)
+    preparation = [call.args[0] for call in plot_counts.call_args_list
+                   if call.args[1].name == "preparation_retention.png"]
+    assert len(preparation) == 6 and all(frame.shape == (6, 5) for frame in preparation)
+    for counts in preparation[1:]:
+        assert counts.columns[:3].tolist() == ["Raw", "TIFF complete", "QC passed"]
+        assert "Select training cohort" in counts.columns[3]
+        assert counts.iloc[:, 3].tolist() == counts.Annotated.tolist() == [1, 0, 1, 0, 1, 0]
+        assert counts.iloc[:, :3].equals(preparation[0].iloc[:, :3])
+    assert [call.args[1] for call in plot_counts.call_args_list
+            if call.args[1].name == "qc_retention.png"] == [reference.figures / "qc_retention.png"]
+    assert not stale_qc.exists()
     assert paths == {name: a.export_parquet for name, a in outputs.items()}
     pd.testing.assert_frame_equal(pd.read_parquet(reference.export_parquet), baseline)
     assert "platemap_file" not in baseline

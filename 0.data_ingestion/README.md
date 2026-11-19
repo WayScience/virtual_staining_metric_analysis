@@ -95,13 +95,20 @@ each candidate pool remains complete.
 | Reference images, cell/nuclear masks and associated tables | `<large_output_root>/pedcp90/reference/` |
 | Training file index, one per density | `<metadata_root>/pedcp90/training/density_<N>/loaddata.parquet` |
 | Independent training images, masks and associated tables | `<large_output_root>/pedcp90/training/density_<N>/` |
-| Per-density QC, preparation/outline retention and previews | `0.data_ingestion/results/training/density_<N>/` |
-| QC before/after counts | `0.data_ingestion/results/qc_retention.png` |
+| Per-density preparation/outline retention and previews | `0.data_ingestion/results/training/density_<N>/` |
+| Shared pooled-source QC before/after counts (all cohorts) | `0.data_ingestion/results/qc_retention.png` |
 | Field counts through preparation | `0.data_ingestion/results/preparation_retention.png` |
 | Field counts before/after outline selection and ingestion | `0.data_ingestion/results/outline_retention.png` |
 | Representative channel and mask previews | `0.data_ingestion/results/montage_*.png` |
 
 Plot locations are relative to the repository, regardless of the working directory.
+Reference and training preparation plots both show Raw → TIFF complete → QC passed →
+cohort selection → Annotated counts for each acquisition plate, with imaging timepoints
+in the legend. The training cohort filter includes platemap, cell line, seeding density
+and requested timepoints; its drop is intentional selection, not additional QC failure.
+The pooled-source QC plot is saved only once at the shared results root, including for
+training-only preparation. Re-preparing a density removes its obsolete duplicate QC plot.
+
 `<source_commit>` identifies the pinned version of the upstream [PCCMA profiling repository](https://github.com/WayScience/pediatric_cancer_atlas_profiling) used for the downloads. 
 Downloaded originals are retained unchanged.
 
