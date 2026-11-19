@@ -19,12 +19,20 @@ dependencies = [
     "tifffile",
     "numpy>=1.26",
     "pandas>=2.2",
+    "PyYAML",
+    "scipy",
     "statsmodels",
     "scikit-learn",
+    "umap-learn>=0.5.7,<0.6",
+    "matplotlib",
+    "microfilm>=0.4",
     "scikit-image",
     "torchmetrics",
     "lightning",
     "polars",
+    "transformers>=4.45,<5",
+    "huggingface-hub",
+    "ome-arrow",
     "virtual_stain_flow @ git+https://github.com/WayScience/virtual_stain_flow.git@fe07aefaabc0c9553d9a64d05f21d65654704478"
 ]
 [project.optional-dependencies]
@@ -45,3 +53,9 @@ where = ["."]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+markers = ["local_ingestion: Mounted-data PedCP smoke tests; explicit local opt-in, never Actions"]
+
+[project.scripts]
+fov-ingest = "utils.fov_ingestion.cli:main"
+pedcp-ingest = "utils.pedcp_data_integration.cli:main"
+fov-degrade = "utils.degradation.cli:main"
