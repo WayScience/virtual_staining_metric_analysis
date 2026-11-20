@@ -14,19 +14,36 @@ By jointly simulating image degradation and biologically driven distribution shi
 ## Dataset
 We use a Cell Painting dataset [PedCP90](https://github.com/WayScience/pedcp90), consisting of 18 unperturbed pediatric cancer cell lines plated under 5 different levels of seeding density.
 
-## Approach
+## Running
 
-### Image degrading transforms
-We selected a suite of 6 families degrading image transforms to simulate artifacts from virtual staining models generating imperfect predictions:
-- Gaussian noise (additive)
-- Gaussian blur
-- Erosion (grayscale morpholical operation)
-- Dilation (grayscale morpholical operation)
-- Gamma correction (dimming and brightening)
-- Grid distortion
-We apply these to the fluoresence Cell Painting channels of our dataset in 6 incremental levels of severity by tuning a single transformation parameter while leaving others fixed (see code for details).
 
-This produces 36 degraded variant per image in our Cell Painting dataset.
+The degradation application entry point is [run.sh](run.sh), using the same project config as ingestion. 
+Its default `run` generates all 36 variants and then exports a montage per intensity channel for one reproducibly selected matched FOV.
+
+- `generate` writes collections only; `report` renders existing collections only.
+- `--dry-run` plans generation without writing collections or figures.
+- `--config`, `--reference`, `--output-root`, `--channels`, `--workers`, `--limit`, and `--fov-ids-file` control inputs and execution. 
+    All intensity channels, including brightfield, are included by default. 
+- `--montage-fov` selects a particular FOV, `--results-dir` changes the figure destination, and `--crop-size` sets the centered crop (default 256; 0 shows the full FOV). 
+    Without a selected ID, `--sample-seed` controls reproducible selection.
+- Collections live below the reference collection's parent in   `degradation/full/<family>/<severity>/`
+
+Six within-family ranks are **Trace, Mild, Moderate, Marked, Severe, Extreme**.
+They describe schedule order, not calibrated or comparable error magnitudes.
+Gaussian blur uses this same six-level schedule through `gaussian_specs()`;
+the full catalog uses that function directly. The three-level pilot generator,
+CLI command, and shell script have been retired; use [run.sh](run.sh) instead.
+In particular, Trace gamma is identity, matching the original schedule.
+
+| Family | Six parameter values | Fixed settings |
+| --- | --- | --- |
+| Elastic grid | displacement fraction 0.1, 0.2, 0.4, 0.6, 0.8, 1.0 | Five nominal grid steps; independent uniform displacement fields smoothed with `scipy.ndimage.gaussian_filter`; each axis normalized to peak displacement of fraction × shortest side / 5; smoothing sigma shortest side / 20; linear `map_coordinates`, reflected borders |
+| Gaussian noise | sensor-range fraction 0.01, 0.02, 0.03, 0.04, 0.05, 0.1 | Zero mean, independent per pixel and channel, clipped to nominal sensor range |
+| Gaussian blur | sigma = 0.8 × sqrt(10, 20, 30, 40, 50, 60) pixels | Reflected borders, truncate 4 |
+| Gamma | geometric spacing from 1 to 3, six exponents | Fixed exponent per level, not random; clipped unit-scale power then restored to raw units |
+| Dilation | 1, 2, 3, 4, 5, 6 iterations | Square 3 × 3 grayscale maximum filter |
+| Erosion | 1, 2, 3, 4, 5, 6 iterations | Square 3 × 3 grayscale minimum filter |
+
 
 ### Image quality assessment metric evaluation of degraded variant against reference
 After applying degradation transforms, we selected a collection of 5 full reference, image quality assessment metrics commonly used in microscopy and histology virtual staining work:
