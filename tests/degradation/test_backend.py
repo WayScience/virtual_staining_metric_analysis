@@ -205,7 +205,7 @@ def test_cli_pilot(tmp_path, reference, module):
     import sys
     destination = tmp_path / 'cli_pilot'
     subprocess.run([
-        sys.executable, '-m', module,
+        sys.executable, '-m', module, 'pilot',
         '--reference', str(reference.root), '--output-root', str(destination),
         '--limit', '1', '--channels', 'DNA', '--workers', '2',
     ], check=True, capture_output=True, text=True)
@@ -213,3 +213,29 @@ def test_cli_pilot(tmp_path, reference, module):
     assert len(roots) == 3
     cohorts = [MicroscopyCollection(root).fovs.fov_id.tolist() for root in roots]
     assert cohorts[0] == cohorts[1] == cohorts[2] and len(cohorts[0]) == 1
+
+
+def test_full_workflow_and_report(tmp_path, reference):
+    import subprocess
+    import sys
+
+    from utils.pedcp_workflow import discover_degradation_variants
+
+    destination, results = tmp_path / 'production', tmp_path / 'results'
+    command = [sys.executable, '-m', 'utils.degradation',
+               '--reference', str(reference.root), '--output-root', str(destination),
+               '--results-dir', str(results), '--limit', '1', '--channels', 'DNA']
+    subprocess.run([*command, '--dry-run'], check=True, capture_output=True, text=True)
+    assert not destination.exists() and not results.exists()
+    subprocess.run(command, check=True, capture_output=True, text=True)
+    variants = discover_degradation_variants(reference, destination)
+    assert len(variants) == 36
+    cohorts = [collection.fovs.fov_id.tolist() for _, collection in variants]
+    assert all(ids == cohorts[0] for ids in cohorts) and len(cohorts[0]) == 1
+    assert len(pd.read_csv(destination / 'degradation_catalog.csv')) == 36
+    assert len(list(results.glob('montage_*_DNA.png'))) == 1
+    # Resume, then render the same artifact independently without regeneration.
+    resumed = subprocess.run(command, check=True, capture_output=True, text=True)
+    assert 'True' in resumed.stdout
+    subprocess.run([*command[:3], 'report', *command[3:]], check=True,
+                   capture_output=True, text=True)
