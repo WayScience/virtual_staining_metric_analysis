@@ -28,10 +28,13 @@ def degrade_collection(
     dry_run: bool = False
 ) -> pd.DataFrame | None:
     """
-    Write one variant. Transform must preserve coordinates and raw intensity units.
+    Write one variant on the same output grid, retaining raw intensity units.
 
     function(image_float32, *, rng, **parameters) returns a finite, same-shape
-    array. Masks are linked, never transformed. Each image gets an independent
+    array. Unit-working transforms use each row's normalization_divisor, then
+    scale back to raw units without general clipping. Masks are linked, never
+    transformed, even when elastic deformation moves image structures deliberately.
+    Each image gets an independent
     reproducible RNG. Use a new implementation version whenever code changes.
 
     :param reference: Original microscopy collection.
@@ -78,6 +81,15 @@ def degrade_collection(
             raise ValueError(f'{fov_id}: requires reference cells and nuclei')
         if not records.loc[records.role.eq('intensity'), 'intensity_scale'].eq('raw').all():
             raise ValueError('This runner expects raw-scale reference intensities')
+    unit_working = descriptor.get('working_scale', 'raw') == 'unit'
+    if unit_working:
+        for row in selected.loc[selected.channel.isin(channels)].to_dict('records'):
+            try:
+                divisor = float(row['normalization_divisor'])
+            except (KeyError, TypeError, ValueError, OverflowError) as exc:
+                raise ValueError('normalization_divisor must be positive and finite') from exc
+            if not np.isfinite(divisor) or divisor <= 0:
+                raise ValueError('normalization_divisor must be positive and finite')
     
     # Compute relative path from output to reference root.
     relative_ref = os.path.relpath(ref.root, output)
@@ -118,8 +130,15 @@ def degrade_collection(
             image = np.array(source, dtype=np.float32, copy=True)
             if not np.isfinite(image).all():
                 raise ValueError(f'Cannot represent source as finite float32: {reference_id}')
+            if unit_working:
+                divisor = float(row['normalization_divisor'])
+                image = (image.astype(np.float64) / divisor).astype(np.float32)
+                if not np.isfinite(image).all():
+                    raise ValueError(f'Cannot represent unit image as finite float32: {reference_id}')
             transformed = np.asarray(transform.function(
                 image, rng=np.random.default_rng(seed), **descriptor['parameters']), dtype=np.float32)
+            if unit_working:
+                transformed = (transformed.astype(np.float64) * divisor).astype(np.float32)
             if transformed.shape != source.shape or not np.isfinite(transformed).all():
                 raise ValueError(f'Transform changed shape or produced nonfinite pixels: {reference_id}')
             arrays[image_id] = transformed

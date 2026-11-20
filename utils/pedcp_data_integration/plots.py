@@ -7,11 +7,11 @@ import numpy as np
 import pandas as pd
 from matplotlib import colormaps
 from matplotlib.backends.backend_agg import FigureCanvasAgg
-from matplotlib.colors import ListedColormap, NoNorm, PowerNorm
+from matplotlib.colors import ListedColormap, NoNorm
 from matplotlib.figure import Figure
-from microfilm.microplot import Microimage
 
 from utils.pedcp_data_integration.recipe import CORRECTED_CHANNELS, ILLUMINATION_METHODS
+from utils.plot_utils import add_scalebar, reference_norm
 
 
 def plot_counts(counts: pd.DataFrame, path: Path, title: str) -> Path:
@@ -76,23 +76,10 @@ def save_montages(collection, count: int, seed: int, output_dir: Path) -> list[P
                 display[view == 0] = 0
                 ax.imshow(display, cmap=colors, norm=NoNorm(), interpolation="nearest")
             else:
-                low, high = np.percentile(view, (1, 99.5))
-                norm = PowerNorm(0.7, low, max(high, low + 1e-6), clip=True)
+                norm = reference_norm(view)
                 ax.imshow(view, cmap="gray", norm=norm, interpolation="nearest")
                 if key == expected[0]:
-                    pixel_size = float(row.pixel_size_um)
-                    if not np.isfinite(pixel_size) or pixel_size <= 0:
-                        raise ValueError(f"{row.fov_id}: scale bar requires positive pixel_size_um")
-                    # A readable 1/2/5 length, about one fifth of the physical FOV width.
-                    target = shape[1] * pixel_size / 5
-                    magnitude = 10 ** np.floor(np.log10(target))
-                    length = max(value for value in (1, 2, 5) if value <= target / magnitude)
-                    Microimage(images=None, ax=ax).add_scalebar(
-                        unit="um",
-                        scalebar_size_in_units=float(length * magnitude),
-                        scalebar_unit_per_pix=pixel_size * stride,
-                        scalebar_font_size=10,
-                    )
+                    add_scalebar(ax, shape[1], float(row.pixel_size_um), stride)
             ax.set_title(key[1], color="white")
             ax.axis("off")
         biology = f"{row.cell_line} | seeding density {row.seeding_density}"
