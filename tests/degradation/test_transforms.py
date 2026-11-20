@@ -17,7 +17,7 @@ from utils.degradation.transforms import (
     elastic_spec,
     erode_spec,
     gamma_spec,
-    gaussian_pilot_specs,
+    gaussian_specs,
     noise_spec,
 )
 from utils.fov_ingestion.collection import MicroscopyCollection
@@ -27,7 +27,7 @@ from .test_backend import inputs as inputs  # noqa: PLC0414 -- register reused p
 from .test_backend import reference as reference  # noqa: PLC0414 -- register reused pytest fixture
 
 
-def test_catalog_and_unchanged_pilot_descriptors():
+def test_catalog_and_shared_six_level_blur():
     catalog = degradation_specs()
     assert len(catalog) == 36
     assert SEVERITY_LEVELS == ('trace', 'mild', 'moderate', 'marked', 'severe', 'extreme')
@@ -45,7 +45,9 @@ def test_catalog_and_unchanged_pilot_descriptors():
     for _, spec in catalog:
         assert spec.working_scale == ('unit' if spec.name in ('gauss_noise', 'random_gamma') else 'raw')
         assert ('working_scale' in spec.descriptor()) == (spec.working_scale == 'unit')
-    for (level, spec), index in zip(gaussian_pilot_specs(), (12, 14, 17)):
+    blur = gaussian_specs()
+    assert [level for level, _ in blur] == list(SEVERITY_LEVELS)
+    for (level, spec), index in zip(blur, range(12, 18)):
         expected = {
             'name': 'gaussian_blur', 'parameters': spec.parameters,
             'implementation': 'scipy.ndimage.gaussian_filter:raw-f32-v1',
@@ -54,7 +56,7 @@ def test_catalog_and_unchanged_pilot_descriptors():
             'output_scale': 'raw', 'output_dtype': 'float32',
             'seed_policy': 'sha256(base_seed,reference_image_id,variant_id):uint64',
         }
-        assert level in ('low', 'mid', 'high')
+        assert level == catalog[index][0]
         assert spec.descriptor() == expected == catalog[index][1].descriptor()
         assert spec.variant_id == 'variant_' + digest(expected)[:24]
 

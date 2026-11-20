@@ -10,8 +10,8 @@ from utils.degradation.degrade import degrade_collection
 from utils.degradation.transforms import (
     TransformSpec,
     gaussian_blur,
-    gaussian_pilot_specs,
     gaussian_spec,
+    gaussian_specs,
 )
 from utils.fov_ingestion.collection import MicroscopyCollection
 from utils.fov_ingestion.ingest import ingest
@@ -46,9 +46,9 @@ def reference(tmp_path, inputs):
     return MicroscopyCollection(root)
 
 
-def test_reference_and_three_blurs(tmp_path, reference):
+def test_reference_and_six_blurs(tmp_path, reference):
     assert set(reference.metadata().cell_type) == {'test'}
-    for level, transform in gaussian_pilot_specs():
+    for level, transform in gaussian_specs():
         out = tmp_path / level
         degrade_collection(reference, out, transform, workers=2)
         derived = MicroscopyCollection(out)
@@ -200,19 +200,13 @@ def test_original_ingestion_compatibility(tmp_path, inputs):
 
 
 @pytest.mark.parametrize('module', ['utils.degradation.cli', 'utils.degradation'])
-def test_cli_pilot(tmp_path, reference, module):
+def test_cli_rejects_retired_pilot(module):
     import subprocess
     import sys
-    destination = tmp_path / 'cli_pilot'
-    subprocess.run([
-        sys.executable, '-m', module, 'pilot',
-        '--reference', str(reference.root), '--output-root', str(destination),
-        '--limit', '1', '--channels', 'DNA', '--workers', '2',
-    ], check=True, capture_output=True, text=True)
-    roots = sorted(destination.glob('*variant_*'))
-    assert len(roots) == 3
-    cohorts = [MicroscopyCollection(root).fovs.fov_id.tolist() for root in roots]
-    assert cohorts[0] == cohorts[1] == cohorts[2] and len(cohorts[0]) == 1
+    result = subprocess.run([sys.executable, '-m', module, 'pilot'],
+                            capture_output=True, text=True, check=False)
+    assert result.returncode == 2
+    assert 'invalid choice' in result.stderr
 
 
 def test_full_workflow_and_report(tmp_path, reference):
