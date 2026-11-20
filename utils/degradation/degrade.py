@@ -135,12 +135,18 @@ def degrade_collection(
                 image = (image.astype(np.float64) / divisor).astype(np.float32)
                 if not np.isfinite(image).all():
                     raise ValueError(f'Cannot represent unit image as finite float32: {reference_id}')
+            
+            # apply the transformation function to the image
+            # note that the seeds are produced from combining reference derived info and the variant id
+            # so regardless of the order of execution, the transformation will be applied the same way to each fov
             transformed = np.asarray(transform.function(
                 image, rng=np.random.default_rng(seed), **descriptor['parameters']), dtype=np.float32)
             if unit_working:
                 transformed = (transformed.astype(np.float64) * divisor).astype(np.float32)
             if transformed.shape != source.shape or not np.isfinite(transformed).all():
                 raise ValueError(f'Transform changed shape or produced nonfinite pixels: {reference_id}')
+            
+            # store the transformed image and associated seed in the arrays and seeds dictionaries
             arrays[image_id] = transformed
             seeds[image_id] = seed
             registry.append({**row, 'image_id': image_id, 'reference_image_id': reference_id,

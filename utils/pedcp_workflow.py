@@ -7,7 +7,7 @@ collections carry the metadata needed by downstream consumers.
 from dataclasses import dataclass
 from pathlib import Path
 
-from utils.degradation.transforms import gaussian_pilot_specs
+from utils.degradation.transforms import gaussian_specs
 from utils.fov_ingestion.collection import MicroscopyCollection
 from utils.pedcp_data_integration.artifacts import Artifacts
 from utils.project_config import ProjectConfig
@@ -70,7 +70,10 @@ def discover_blur_variants(reference, root, channels=None) -> list[MicroscopyCol
     reference = (reference if isinstance(reference, MicroscopyCollection)
                  else MicroscopyCollection(reference))
     root = Path(root)
-    expected = dict(gaussian_pilot_specs())
+    # Read-only support for historical profiling artifacts; generation uses six levels.
+    blur = dict(gaussian_specs())
+    expected = {old: blur[level] for old, level in
+                [('low', 'trace'), ('mid', 'moderate'), ('high', 'extreme')]}
     matches = {level: [] for level in expected}
     rejected = []
     for path in sorted(root.iterdir()) if root.is_dir() else []:
@@ -103,7 +106,7 @@ def discover_blur_variants(reference, root, channels=None) -> list[MicroscopyCol
     if problems:
         detail = '; '.join([*problems, *rejected])
         raise ValueError(f'Cannot discover blur pilot in {root}: {detail}. '
-                         'Generate the pilot or supply explicit --variants paths.')
+                         'Supply explicit --variants paths for existing collections.')
     return [matches[level][0] for level in expected]
 
 

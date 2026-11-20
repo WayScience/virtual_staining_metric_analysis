@@ -1,8 +1,5 @@
-"""SciPy transforms on a fixed output grid, with raw collection input/output units.
-
-Gaussian blur deliberately retains the pilot's reflect/truncate boundaries, not
-the non-identical legacy OpenCV boundaries. Elastic deformation preserves the
-output grid, not structure coordinates: reference masks stay anchored deliberately.
+"""
+SciPy degradation (transforms) implementations.
 """
 from __future__ import annotations
 
@@ -20,6 +17,9 @@ from utils.fov_ingestion.writer import digest
 
 @dataclass(frozen=True)
 class TransformSpec:
+    """
+    Specification for a degradation transform.
+    """
     name: str
     parameters: dict
     implementation: str  # Explicit code version, e.g. my_module.my_transform:v1.
@@ -33,7 +33,11 @@ class TransformSpec:
         if self.working_scale not in ('raw', 'unit'):
             raise ValueError("working_scale must be 'raw' or 'unit'")
 
-    def descriptor(self):
+    def descriptor(self) -> dict:
+        """
+        Helps with generating a JSON-serializable descriptor for the transform,
+        which then can be used to fingerprint
+        """
         if not self.name or not self.implementation:
             raise ValueError('Transform name and implementation version are required')
         if self.mask_policy != 'fixed_reference':
@@ -45,7 +49,7 @@ class TransformSpec:
             'input_scale': 'raw', 'output_scale': 'raw', 'output_dtype': 'float32',
             'seed_policy': 'sha256(base_seed,reference_image_id,variant_id):uint64',
         }
-        # Do not change raw descriptors: their bytes determine existing pilot IDs.
+        # Omit the default working scale to preserve existing raw variant IDs.
         if self.working_scale != 'raw':
             descriptor['working_scale'] = self.working_scale
         return json.loads(json.dumps(descriptor, allow_nan=False))
@@ -77,13 +81,13 @@ def gaussian_spec(sigma_px, *, mode='reflect', truncate=4.0):
     )
 
 
-def gaussian_pilot_specs():
-    # Three entries from the user's existing six-level sigma schedule.
-    return [(level, gaussian_spec(0.8 * np.sqrt(iterations)))
-            for level, iterations in [('low', 10), ('mid', 30), ('high', 60)]]
-
-
 SEVERITY_LEVELS = ('trace', 'mild', 'moderate', 'marked', 'severe', 'extreme')
+
+
+def gaussian_specs() -> list[tuple[str, TransformSpec]]:
+    """The same six named blur levels used by the full degradation catalog."""
+    return [(level, gaussian_spec(0.8 * np.sqrt(iterations)))
+            for level, iterations in zip(SEVERITY_LEVELS, (10, 20, 30, 40, 50, 60))]
 
 
 def _positive(value, name):
@@ -200,13 +204,14 @@ def erode_spec(iterations, *, kernel_size=3):
 
 def degradation_specs() -> list[tuple[str, TransformSpec]]:
     """Six families, six severity levels each, in legacy family-major page order."""
-    families = [
-        (elastic_spec, [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]),
-        (noise_spec, [0.01, 0.02, 0.03, 0.04, 0.05, 0.1]),
-        (gaussian_spec, [0.8 * np.sqrt(n) for n in (10, 20, 30, 40, 50, 60)]),
-        (gamma_spec, np.geomspace(1.0, 3.0, 6)),
-        (dilate_spec, range(1, 7)),
-        (erode_spec, range(1, 7)),
+    def levels(factory, values):
+        return [(level, factory(value)) for level, value in zip(SEVERITY_LEVELS, values)]
+
+    return [
+        *levels(elastic_spec, [0.1, 0.2, 0.4, 0.6, 0.8, 1.0]),
+        *levels(noise_spec, [0.01, 0.02, 0.03, 0.04, 0.05, 0.1]),
+        *gaussian_specs(),
+        *levels(gamma_spec, np.geomspace(1.0, 3.0, 6)),
+        *levels(dilate_spec, range(1, 7)),
+        *levels(erode_spec, range(1, 7)),
     ]
-    return [(level, factory(value)) for factory, values in families
-            for level, value in zip(SEVERITY_LEVELS, values)]

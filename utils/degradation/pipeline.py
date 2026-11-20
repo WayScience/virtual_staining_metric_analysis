@@ -1,4 +1,7 @@
-"""Full six-family degradation pipeline and its saved visual report."""
+"""
+Full degradation pipeline.
+"""
+
 import json
 from pathlib import Path
 
@@ -25,14 +28,21 @@ def run(reference, output_root, *, channels=None, fov_ids=None, workers=1, dry_r
                         'variant_id': transform.variant_id, 'collection': str(destination),
                         'descriptor_json': json.dumps(transform.descriptor(), sort_keys=True)})
     frame = pd.DataFrame(catalog)
+
     if not dry_run:
+        # using csv for the sake of human readability and easy inspection
+        # this is a very small catalog to begin with, with string identifiers for transforms and levels
+        # for plotting so parquet wouldn't provide much additional benefit
         frame.to_csv(Path(output_root) / 'degradation_catalog.csv', index=False)
     return frame
 
 
 def report(reference, output_root, output_dir, *, fov_id=None, channels=None,
            crop_size=256, seed=42):
-    """Render one matched FOV across every saved variant, once per channel."""
+    """
+    Report for the degradation module is simply montages of the degradations.
+    As the exact same processed data is used and already reported by 0.data_ingestion.    
+    """
     from utils.degradation.plots import save_degradation_montages
 
     reference = (reference if isinstance(reference, MicroscopyCollection)
@@ -49,5 +59,6 @@ def report(reference, output_root, output_dir, *, fov_id=None, channels=None,
         raise ValueError(f'{fov_id}: FOV is not shared by all degradation variants')
     if channels is None:
         channels = variants[0][1].spec['channels']
+        
     return save_degradation_montages(reference, variants, fov_id, output_dir,
                                     channels=channels, crop_size=crop_size)

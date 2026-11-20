@@ -30,13 +30,16 @@ Its default `run` generates all 36 variants and then exports a montage per inten
 
 Six within-family ranks are **Trace, Mild, Moderate, Marked, Severe, Extreme**.
 They describe schedule order, not calibrated or comparable error magnitudes.
+Gaussian blur uses this same six-level schedule through `gaussian_specs()`;
+the full catalog uses that function directly. The three-level pilot generator,
+CLI command, and shell script have been retired; use [run.sh](run.sh) instead.
 In particular, Trace gamma is identity, matching the original schedule.
 
 | Family | Six parameter values | Fixed settings |
 | --- | --- | --- |
 | Elastic grid | displacement fraction 0.1, 0.2, 0.4, 0.6, 0.8, 1.0 | Five nominal grid steps; independent uniform displacement fields smoothed with `scipy.ndimage.gaussian_filter`; each axis normalized to peak displacement of fraction × shortest side / 5; smoothing sigma shortest side / 20; linear `map_coordinates`, reflected borders |
 | Gaussian noise | sensor-range fraction 0.01, 0.02, 0.03, 0.04, 0.05, 0.1 | Zero mean, independent per pixel and channel, clipped to nominal sensor range |
-| Gaussian blur | sigma = 0.8 × sqrt(10, 20, 30, 40, 50, 60) pixels | Reflected borders, truncate 4; same implementation as the pilot |
+| Gaussian blur | sigma = 0.8 × sqrt(10, 20, 30, 40, 50, 60) pixels | Reflected borders, truncate 4 |
 | Gamma | geometric spacing from 1 to 3, six exponents | Fixed exponent per level, not random; clipped unit-scale power then restored to raw units |
 | Dilation | 1, 2, 3, 4, 5, 6 iterations | Square 3 × 3 grayscale maximum filter |
 | Erosion | 1, 2, 3, 4, 5, 6 iterations | Square 3 × 3 grayscale minimum filter |
